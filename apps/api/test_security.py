@@ -80,6 +80,17 @@ def test_repository_disk_path_rejects_traversal(settings, tmp_path):
 
 
 @pytest.mark.django_db
+def test_repository_custom_disk_path_resolves():
+    repo = Repository(
+        name="my-repo",
+        path="alice/my-repo",
+        owner_id=make_user("alice").id,
+        custom_disk_path="/var/git/custom-storage/my-repo.git"
+    )
+    assert str(repo.disk_path).replace("\\", "/").endswith("/var/git/custom-storage/my-repo.git")
+
+
+@pytest.mark.django_db
 def test_repository_clean_rejects_unsafe_name():
     repo = Repository(name="../outside", path="alice/../outside", owner_id=make_user("alice").id)
 

@@ -84,6 +84,11 @@
               </button>
             </div>
           </div>
+          <div>
+            <label class="text-xs font-semibold mb-1 block">Custom server storage path (optional)</label>
+            <input v-model="customDiskPath" placeholder="/var/git/my-custom-folder/repo.git" />
+            <p class="text-[10px] text-[#737373] mt-0.5">Physical directory on the server disk to initialize this repository.</p>
+          </div>
           
           <p v-if="error" class="text-xs text-[#dc2626]">{{ error }}</p>
           <div class="pt-2">
@@ -259,6 +264,11 @@
               </button>
             </div>
           </div>
+          <div>
+            <label class="text-xs font-semibold mb-1 block">Custom server storage path (optional)</label>
+            <input v-model="customDiskPath" placeholder="/var/git/my-custom-folder/repo.git" />
+            <p class="text-[10px] text-[#737373] mt-0.5">Physical directory on the server disk to initialize this repository.</p>
+          </div>
           
           <p v-if="error" class="text-xs text-[#dc2626]">{{ error }}</p>
           <div class="pt-2">
@@ -317,6 +327,11 @@
               </button>
             </div>
           </div>
+          <div>
+            <label class="text-xs font-semibold mb-1 block">Custom server storage path (optional)</label>
+            <input v-model="customDiskPath" placeholder="/var/git/my-custom-folder/repo.git" />
+            <p class="text-[10px] text-[#737373] mt-0.5">Physical directory on the server disk to initialize this repository.</p>
+          </div>
           
           <p v-if="error" class="text-xs text-[#dc2626]">{{ error }}</p>
           <div class="flex gap-2 pt-2">
@@ -354,6 +369,8 @@ const selectedOwner = computed(() => {
   const parts = namespace.value.split(":");
   return { type: parts[0], id: parts[1] };
 });
+
+const customDiskPath = ref("");
 
 // Blank Project fields
 const blankName = ref("");
@@ -409,6 +426,7 @@ const gitlabFiltered = computed(() => {
 watch(activeTab, (tab) => {
   error.value = "";
   tokenError.value = "";
+  customDiskPath.value = "";
   if (tab === "github" && gitHubTokenStatus.value && !githubRepos.value.length) {
     fetchRepos("github");
   }
@@ -532,7 +550,8 @@ async function createBlank() {
       description: blankDesc.value,
       visibility: blankVis.value,
       owner_type: selectedOwner.value.type,
-      owner_id: selectedOwner.value.id
+      owner_id: selectedOwner.value.id,
+      custom_disk_path: customDiskPath.value
     });
     router.push(`/${repo.path}`);
   } catch (e: any) {
@@ -563,7 +582,8 @@ async function executeImport() {
       description: importDescription.value,
       visibility: importVisibility.value,
       owner_type: selectedOwner.value.type,
-      owner_id: selectedOwner.value.id
+      owner_id: selectedOwner.value.id,
+      custom_disk_path: customDiskPath.value
     });
     showImportModal.value = false;
     router.push(`/${repo.path}`);
@@ -602,7 +622,8 @@ async function createFromUrl() {
       description: urlDesc.value,
       visibility: urlVis.value,
       owner_type: selectedOwner.value.type,
-      owner_id: selectedOwner.value.id
+      owner_id: selectedOwner.value.id,
+      custom_disk_path: customDiskPath.value
     });
     router.push(`/${repo.path}`);
   } catch (e: any) {

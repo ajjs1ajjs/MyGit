@@ -54,6 +54,7 @@ class Repository(BaseModel):
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="forks"
     )
     size_kb = models.BigIntegerField(default=0)
+    custom_disk_path = models.CharField(max_length=1024, blank=True, null=True, default=None)
 
     class Meta:
         db_table = "repositories_repository"
@@ -69,6 +70,10 @@ class Repository(BaseModel):
 
     @property
     def disk_path(self):
+        if self.custom_disk_path:
+            from pathlib import Path
+            return Path(self.custom_disk_path).resolve(strict=False)
+
         repo_root = getattr(settings, "MYGIT_REPOS_ROOT", None)
         if repo_root is None:
             import os

@@ -33,6 +33,7 @@ class RepositorySerializer(serializers.ModelSerializer):
             "updated_at",
             "owner_type",
             "owner_id",
+            "custom_disk_path",
         ]
         read_only_fields = [
             "id",
@@ -43,6 +44,11 @@ class RepositorySerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def validate_custom_disk_path(self, value):
+        if not value or not value.strip():
+            return None
+        return value.strip()
 
     def create(self, validated_data):
         request = self.context["request"]
@@ -468,6 +474,12 @@ class ProjectViewSet(viewsets.ModelViewSet):
         else:
             return Response({"detail": "Invalid provider."}, status=status.HTTP_400_BAD_REQUEST)
 
+        custom_disk_path = request.data.get("custom_disk_path")
+        if custom_disk_path and custom_disk_path.strip():
+            custom_disk_path = custom_disk_path.strip()
+        else:
+            custom_disk_path = None
+
         repo = Repository.objects.create(
             owner_type=owner_type,
             owner_id=owner_id,
@@ -476,6 +488,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             description=description,
             visibility=visibility,
             default_branch="main",
+            custom_disk_path=custom_disk_path,
         )
 
         disk_path = repo.disk_path
