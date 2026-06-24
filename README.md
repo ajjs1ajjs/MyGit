@@ -109,8 +109,6 @@ cd frontend && npx vue-tsc --noEmit
 
 ## API-ендпоінти
 
-Документація OpenAPI: `http://your-host:8060/api/docs/`
-
 Основні ендпоінти:
 ```
 POST   /api/v1/auth/register/           Реєстрація

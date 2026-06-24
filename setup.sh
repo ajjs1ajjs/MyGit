@@ -101,10 +101,6 @@ echo "[3/7] Installing Python backend..."
 "${INSTALL_DIR}/venv/bin/pip" install --upgrade pip -q
 "${INSTALL_DIR}/venv/bin/pip" install -r "${INSTALL_DIR}/backend/requirements.txt" -q
 
-if [ -z "$ADMIN_PASSWORD" ]; then
-    ADMIN_PASSWORD="$(openssl rand -base64 12)"
-fi
-
 DJANGO_SECRET_KEY=$(openssl rand -base64 48 2>/dev/null || python3 -c "import secrets;print(secrets.token_urlsafe(48))")
 
 cat > "${INSTALL_DIR}/backend/.env" <<EOF
