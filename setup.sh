@@ -82,7 +82,7 @@ echo ""
 echo "[2/7] Setting up database..."
 if command -v pg_isready &>/dev/null; then
     systemctl start postgresql 2>/dev/null || pg_ctlcluster auto start 2>/dev/null || true
-    su - postgres -c "psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='mygit'\" 2>/dev/null | grep -q 1 || psql -c \"CREATE USER mygit WITH PASSWORD '${DB_PASSWORD}';\"" 2>/dev/null || true
+    su - postgres -c "psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='mygit'\" 2>/dev/null | grep -q 1 && psql -c \"ALTER USER mygit WITH PASSWORD '${DB_PASSWORD}';\" || psql -c \"CREATE USER mygit WITH PASSWORD '${DB_PASSWORD}';\"" 2>/dev/null || true
     su - postgres -c "psql -tc \"SELECT 1 FROM pg_database WHERE datname='mygit'\" 2>/dev/null | grep -q 1 || psql -c \"CREATE DATABASE mygit OWNER mygit;\"" 2>/dev/null || true
     DB_URL="postgres://mygit:${DB_PASSWORD}@localhost:5432/mygit"
     echo "  PostgreSQL configured."
