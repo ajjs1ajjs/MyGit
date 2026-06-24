@@ -99,7 +99,7 @@ fi
 
 DJANGO_SECRET_KEY=$(openssl rand -base64 48 2>/dev/null || python3 -c "import secrets;print(secrets.token_urlsafe(48))")
 
-cat > "${INSTALL_DIR}/.env" <<EOF
+cat > "${INSTALL_DIR}/backend/.env" <<EOF
 DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
 DJANGO_ALLOWED_HOSTS=${DOMAIN},localhost,127.0.0.1
 DATABASE_URL=${DB_URL}
@@ -117,10 +117,10 @@ EOF
 mkdir -p "${INSTALL_DIR}/repos" "${INSTALL_DIR}/logs" "${INSTALL_DIR}/static" "${INSTALL_DIR}/media"
 
 cd "${INSTALL_DIR}/backend"
-"${INSTALL_DIR}/venv/bin/python" manage.py migrate --noinput
-"${INSTALL_DIR}/venv/bin/python" manage.py collectstatic --noinput
+DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py migrate --noinput
+DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py collectstatic --noinput
 
-echo "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.create_superuser('${ADMIN_EMAIL}', '${ADMIN_USERNAME}', '${ADMIN_PASSWORD}') if not User.objects.filter(email='${ADMIN_EMAIL}').exists() else None" | "${INSTALL_DIR}/venv/bin/python" manage.py shell 2>/dev/null || true
+echo "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.create_superuser('${ADMIN_EMAIL}', '${ADMIN_USERNAME}', '${ADMIN_PASSWORD}') if not User.objects.filter(email='${ADMIN_EMAIL}').exists() else None" | DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py shell 2>/dev/null || true
 
 VENV_BIN="${INSTALL_DIR}/venv/bin"
 
@@ -157,7 +157,7 @@ After=network.target
 User=root
 WorkingDirectory=${INSTALL_DIR}/backend
 Environment="DJANGO_SETTINGS_MODULE=config.settings.production"
-EnvironmentFile=${INSTALL_DIR}/.env
+EnvironmentFile=${INSTALL_DIR}/backend/.env
 ExecStart=${VENV_BIN}/uvicorn config.asgi:application --host 127.0.0.1 --port 8000
 Restart=always
 SVCEND
@@ -171,7 +171,7 @@ After=network.target
 User=root
 WorkingDirectory=${INSTALL_DIR}/backend
 Environment="DJANGO_SETTINGS_MODULE=config.settings.production"
-EnvironmentFile=${INSTALL_DIR}/.env
+EnvironmentFile=${INSTALL_DIR}/backend/.env
 ExecStart=${VENV_BIN}/gunicorn config.wsgi:application --bind 127.0.0.1:8001 --workers 4
 Restart=always
 SVCEND
@@ -185,7 +185,7 @@ After=network.target
 User=root
 WorkingDirectory=${INSTALL_DIR}/backend
 Environment="DJANGO_SETTINGS_MODULE=config.settings.production"
-EnvironmentFile=${INSTALL_DIR}/.env
+EnvironmentFile=${INSTALL_DIR}/backend/.env
 ExecStart=${VENV_BIN}/celery -A config worker -l info
 Restart=always
 SVCEND
