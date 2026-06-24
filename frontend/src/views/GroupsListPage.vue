@@ -34,6 +34,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue"; import { useRouter } from "vue-router"; import { api } from "../api/client";
 const router = useRouter(); const groups = ref<any[]>([]); const showNew = ref(false); const name = ref(""); const desc = ref(""); const err = ref("");
-async function create(){ if(!name.value)return; try{ const g=await api.post("/groups/",{name:name.value,path:name.value.toLowerCase().replace(/\s+/g,'-'),description:desc.value}); showNew=false; name.value=''; desc.value=''; router.push(`/groups/${g.id}`); }catch(e:any){ err.value=e.message } }
+async function create(){ if(!name.value)return; try{ const g=await api.post("/groups/",{name:name.value,path:name.value.toLowerCase().replace(/\s+/g,'-'),description:desc.value}); showNew.value=false; name.value=''; desc.value=''; router.push(`/groups/${g.id}`); }catch(e:any){ err.value=e.message } }
 onMounted(async ()=>{ try{ groups.value=(await api.get("/groups/"))||[] }catch{} });
 </script>
