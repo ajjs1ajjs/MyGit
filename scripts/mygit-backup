@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# MyGit Backup Script
+# Usage: ./scripts/mygit-backup /path/to/backup/dir
+
+BACKUP_DIR="${1:-/opt/mygit/backups/$(date +%Y%m%d_%H%M%S)}"
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPOS_DIR="${MYGIT_REPOS_ROOT:-$PROJECT_DIR/repos}"
+DB_URL="${DATABASE_URL:-sqlite:///$PROJECT_DIR/db.sqlite3}"
+
+mkdir -p "$BACKUP_DIR"
+
+echo "=== MyGit Backup ==="
+echo "Backup dir: $BACKUP_DIR"
+echo ""
+
+# Backup database
+echo "Backing up database..."
+if [[ "$DB_URL" == sqlite://* ]]; then
+    DB_PATH="${DB_URL#sqlite:///}"
+    cp "$DB_PATH" "$BACKUP_DIR/db.sqlite3"
+    echo "  SQLite copied."
+elif [[ "$DB_URL" == postgres://* ]]; then
+    pg_dump "$DB_URL" > "$BACKUP_DIR/db.sql"
+    echo "  PostgreSQL dumped."
+fi
+
+# Backup repositories
+echo "Backing up repositories..."
+rsync -a --relative "$REPOS_DIR/./" "$BACKUP_DIR/repos/"
+echo "  Repos synced."
+
+# Backup .env
+if [ -f "$PROJECT_DIR/.env" ]; then
+    cp "$PROJECT_DIR/.env" "$BACKUP_DIR/.env"
+    echo "  .env copied."
+fi
+
+echo ""
+echo "Backup complete: $BACKUP_DIR"

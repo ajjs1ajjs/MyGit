@@ -1,0 +1,125 @@
+---
+- name: Deploy MyGit
+  hosts: all
+  become: yes
+  vars:
+    mygit_user: mygit
+    mygit_home: /opt/mygit
+    mygit_repos_root: /var/opt/mygit/repos
+    domain: git.company.local
+    django_secret_key: "{{ vault_django_secret_key }}"
+    postgres_password: "{{ vault_postgres_password }}"
+
+  tasks:
+    - name: Create mygit user
+      user:
+        name: "{{ mygit_user }}"
+        home: "{{ mygit_home }}"
+        shell: /bin/bash
+        system: yes
+
+    - name: Install system packages
+      apt:
+        name:
+          - git
+          - python3.12
+          - python3.12-venv
+          - python3-pip
+          - postgresql
+          - redis
+          - nginx
+          - rsync
+        state: present
+        update_cache: yes
+
+    - name: Clone application
+      git:
+        repo: "{{ git_repo_url }}"
+        dest: "{{ mygit_home }}/backend"
+        version: master
+
+    - name: Create virtualenv
+      pip:
+        requirements: "{{ mygit_home }}/backend/requirements.txt"
+        virtualenv: "{{ mygit_home }}/venv"
+        virtualenv_python: python3.12
+
+    - name: Create directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ mygit_user }}"
+        group: "{{ mygit_user }}"
+      loop:
+        - "{{ mygit_repos_root }}"
+        - "{{ mygit_home }}/logs"
+        - "{{ mygit_home }}/static"
+        - "{{ mygit_home }}/media"
+
+    - name: Copy .env
+      template:
+        src: .env.j2
+        dest: "{{ mygit_home }}/.env"
+        owner: "{{ mygit_user }}"
+
+    - name: Run migrations
+      command: "{{ mygit_home }}/venv/bin/python manage.py migrate"
+      args:
+        chdir: "{{ mygit_home }}/backend"
+      environment:
+        DJANGO_SETTINGS_MODULE: config.settings.production
+
+    - name: Collect static files
+      command: "{{ mygit_home }}/venv/bin/python manage.py collectstatic --noinput"
+      args:
+        chdir: "{{ mygit_home }}/backend"
+
+    - name: Setup systemd services
+      template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+      loop:
+        - mygit-api.service
+        - mygit-git-http.service
+        - mygit-celery.service
+      notify: restart services
+
+    - name: Setup nginx
+      template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/sites-available/{{ domain }}
+      notify: restart nginx
+
+    - name: Enable nginx site
+      file:
+        src: /etc/nginx/sites-available/{{ domain }}
+        dest: /etc/nginx/sites-enabled/{{ domain }}
+        state: link
+
+    - name: Setup SSH AuthorizedKeysCommand
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^AuthorizedKeysCommand"
+        line: "AuthorizedKeysCommand {{ mygit_home }}/backend/scripts/mygit-authorized-keys"
+      notify: restart sshd
+
+  handlers:
+    - name: restart services
+      systemd:
+        name: "{{ item }}"
+        state: restarted
+        daemon_reload: yes
+      loop:
+        - mygit-api
+        - mygit-git-http
+        - mygit-celery
+
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted
+
+    - name: restart sshd
+      systemd:
+        name: sshd
+        state: restarted
