@@ -31,6 +31,8 @@ class RepositorySerializer(serializers.ModelSerializer):
             "size_kb",
             "created_at",
             "updated_at",
+            "owner_type",
+            "owner_id",
         ]
         read_only_fields = [
             "id",
@@ -44,9 +46,24 @@ class RepositorySerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         request = self.context["request"]
-        validated_data["owner_type"] = "user"
-        validated_data["owner_id"] = request.user.id
-        validated_data["path"] = f"{request.user.username}/{validated_data['name']}"
+        owner_type = validated_data.get("owner_type", "user")
+        owner_id = validated_data.get("owner_id", request.user.id)
+
+        if owner_type == "organization":
+            from apps.organizations.models import Group, GroupMember
+            group = get_object_or_404(Group, id=owner_id)
+            if not request.user.is_superuser and not GroupMember.objects.filter(group=group, user=request.user).exists():
+                raise serializers.ValidationError("You do not have access to this group.")
+            owner_path = group.path
+        else:
+            owner_type = "user"
+            owner_id = request.user.id
+            owner_path = request.user.username
+
+        validated_data["owner_type"] = owner_type
+        validated_data["owner_id"] = owner_id
+        validated_data["path"] = f"{owner_path}/{validated_data['name']}"
+
         repo = Repository.objects.create(**validated_data)
 
         GitBackend(repo.disk_path).init_bare()
@@ -407,7 +424,21 @@ class ProjectViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        path = f"{request.user.username}/{name}"
+        owner_type = request.data.get("owner_type", "user")
+        owner_id = request.data.get("owner_id")
+
+        if owner_type == "organization" and owner_id:
+            from apps.organizations.models import Group, GroupMember
+            group = get_object_or_404(Group, id=owner_id)
+            if not request.user.is_superuser and not GroupMember.objects.filter(group=group, user=request.user).exists():
+                return Response({"detail": "You do not have access to this group."}, status=status.HTTP_403_FORBIDDEN)
+            owner_path = group.path
+        else:
+            owner_type = "user"
+            owner_id = request.user.id
+            owner_path = request.user.username
+
+        path = f"{owner_path}/{name}"
         if Repository.objects.filter(path=path).exists():
             return Response({"detail": "Repository already exists."}, status=status.HTTP_409_CONFLICT)
 
@@ -438,8 +469,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Invalid provider."}, status=status.HTTP_400_BAD_REQUEST)
 
         repo = Repository.objects.create(
-            owner_type="user",
-            owner_id=request.user.id,
+            owner_type=owner_type,
+            owner_id=owner_id,
             name=name,
             path=path,
             description=description,

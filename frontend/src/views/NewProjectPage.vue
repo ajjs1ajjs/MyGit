@@ -48,9 +48,18 @@
         <p class="text-sm text-[#737373] mb-4">Create a new empty repository to start versioning your code.</p>
         
         <div class="space-y-3 max-w-lg">
-          <div>
-            <label class="text-xs font-semibold mb-1 block">Project name</label>
-            <input v-model="blankName" placeholder="my-awesome-project" />
+          <div class="flex gap-3">
+            <div class="w-1/3">
+              <label class="text-xs font-semibold mb-1 block">Owner / Namespace</label>
+              <select v-model="namespace" class="w-full px-3 py-2 border rounded text-sm bg-white dark:bg-slate-800">
+                <option :value="`user:${auth.user?.id}`">{{ auth.user?.username }} (Personal)</option>
+                <option v-for="g in groups" :key="g.id" :value="`organization:${g.id}`">{{ g.path }}</option>
+              </select>
+            </div>
+            <div class="flex-1">
+              <label class="text-xs font-semibold mb-1 block">Project name</label>
+              <input v-model="blankName" placeholder="my-awesome-project" class="w-full" />
+            </div>
           </div>
           <div>
             <label class="text-xs font-semibold mb-1 block">Description (optional)</label>
@@ -214,9 +223,18 @@
               <input v-model="urlToken" type="password" placeholder="personal-token-or-password" />
             </div>
           </div>
-          <div>
-            <label class="text-xs font-semibold mb-1 block">Local project name</label>
-            <input v-model="urlName" placeholder="local-name" />
+          <div class="flex gap-3">
+            <div class="w-1/3">
+              <label class="text-xs font-semibold mb-1 block">Owner / Namespace</label>
+              <select v-model="namespace" class="w-full px-3 py-2 border rounded text-sm bg-white dark:bg-slate-800">
+                <option :value="`user:${auth.user?.id}`">{{ auth.user?.username }} (Personal)</option>
+                <option v-for="g in groups" :key="g.id" :value="`organization:${g.id}`">{{ g.path }}</option>
+              </select>
+            </div>
+            <div class="flex-1">
+              <label class="text-xs font-semibold mb-1 block">Local project name</label>
+              <input v-model="urlName" placeholder="local-name" class="w-full" />
+            </div>
           </div>
           <div>
             <label class="text-xs font-semibold mb-1 block">Description (optional)</label>
@@ -263,7 +281,14 @@
         <div class="card-body space-y-4">
           <div>
             <label class="text-xs font-semibold mb-1 block">Source path</label>
-            <input :value="importTarget.full_name" disabled class="bg-gray-100 dark:bg-slate-700" />
+            <input :value="importTarget.full_name" disabled class="bg-gray-100 dark:bg-slate-700 w-full px-3 py-2 border rounded text-sm" />
+          </div>
+          <div>
+            <label class="text-xs font-semibold mb-1 block">Namespace / Owner</label>
+            <select v-model="namespace" class="w-full px-3 py-2 border rounded text-sm bg-white dark:bg-slate-800">
+              <option :value="`user:${auth.user?.id}`">{{ auth.user?.username }} (Personal)</option>
+              <option v-for="g in groups" :key="g.id" :value="`organization:${g.id}`">{{ g.path }}</option>
+            </select>
           </div>
           <div>
             <label class="text-xs font-semibold mb-1 block">Local project name</label>
@@ -320,6 +345,15 @@ const activeTab = ref("blank");
 const loading = ref(false);
 const error = ref("");
 const tokenError = ref("");
+
+const groups = ref<any[]>([]);
+const namespace = ref("");
+
+const selectedOwner = computed(() => {
+  if (!namespace.value) return { type: "user", id: auth.user?.id || "" };
+  const parts = namespace.value.split(":");
+  return { type: parts[0], id: parts[1] };
+});
 
 // Blank Project fields
 const blankName = ref("");
@@ -401,7 +435,11 @@ onMounted(async () => {
     router.push("/auth/login");
     return;
   }
+  namespace.value = `user:${auth.user.id}`;
   await checkTokens();
+  try {
+    groups.value = await api.get("/groups/") || [];
+  } catch {}
 });
 
 async function checkTokens() {
@@ -492,7 +530,9 @@ async function createBlank() {
     const repo = await api.post("/projects/", {
       name: blankName.value,
       description: blankDesc.value,
-      visibility: blankVis.value
+      visibility: blankVis.value,
+      owner_type: selectedOwner.value.type,
+      owner_id: selectedOwner.value.id
     });
     router.push(`/${repo.path}`);
   } catch (e: any) {
@@ -521,7 +561,9 @@ async function executeImport() {
       repo_name: importTarget.value.full_name,
       name: importLocalName.value,
       description: importDescription.value,
-      visibility: importVisibility.value
+      visibility: importVisibility.value,
+      owner_type: selectedOwner.value.type,
+      owner_id: selectedOwner.value.id
     });
     showImportModal.value = false;
     router.push(`/${repo.path}`);
@@ -558,7 +600,9 @@ async function createFromUrl() {
       clone_url: formattedUrl,
       name: urlName.value,
       description: urlDesc.value,
-      visibility: urlVis.value
+      visibility: urlVis.value,
+      owner_type: selectedOwner.value.type,
+      owner_id: selectedOwner.value.id
     });
     router.push(`/${repo.path}`);
   } catch (e: any) {
