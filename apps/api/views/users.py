@@ -67,9 +67,13 @@ class UserViewSet(viewsets.GenericViewSet):
         if not request.user.is_superuser:
             data.pop("is_superuser", None)
             data.pop("is_active", None)
+        password = data.pop("password", None)
         serializer = UserSerializer(user, data=data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        if password:
+            user.set_password(password)
+            user.save(update_fields=["password"])
         return Response(serializer.data)
 
     def list(self, request):
