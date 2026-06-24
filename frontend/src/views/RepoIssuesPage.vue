@@ -1,36 +1,33 @@
 <template>
-  <div class="max-w-4xl mx-auto">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="font-semibold">Issues</h2>
-        <RouterLink :to="`/${repoUsername}/${repoName}/-/issues/new`" class="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700">New Issue</RouterLink>
-      </div>
-      <div v-if="issues.length" class="border rounded divide-y">
-        <RouterLink
-          v-for="i in issues"
-          :key="i.number"
-          :to="`/${repoUsername}/${repoName}/-/issues/${i.number}`"
-          class="px-4 py-3 flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-slate-800"
-        >
-          <span :class="i.state === 'open' ? 'text-green-600' : 'text-red-600'" class="text-lg leading-none">&bull;</span>
-          <div class="flex-1">
-            <span :class="i.state === 'closed' ? 'line-through text-gray-400' : ''" class="text-sm">{{ i.title }}</span>
-            <div class="text-xs text-gray-500 mt-0.5">#{{ i.number }} opened by {{ i.author_username }} &middot; {{ new Date(i.created_at).toLocaleDateString() }}</div>
-          </div>
-          <div v-if="i.labels?.length" class="flex gap-1">
-            <span v-for="l in i.labels" :key="l.id" :style="{ background: l.color + '20', color: l.color, borderColor: l.color }" class="px-2 py-0.5 text-xs rounded-full border">
-              {{ l.name }}
-            </span>
-          </div>
-        </RouterLink>
-      </div>
-      <p v-else-if="!loading" class="text-sm text-gray-500">No issues yet.</p>
-      <p v-if="loading" class="text-sm text-gray-500">Loading...</p>
-      <p v-if="error" class="text-sm text-red-500">{{ error }}</p>
+  <div class="max-w-5xl">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-semibold">Issues</h2>
+      <RouterLink :to="`/${repoUsername}/${repoName}/-/issues/new`" class="btn btn-confirm btn-sm">New issue</RouterLink>
     </div>
-  </template>
+    <div v-if="issues.length" class="card !p-0 !mb-0">
+      <div class="border-b border-gray-100 dark:border-gray-800 px-4 py-2 flex gap-3 text-xs text-gray-500">
+        <button @click="stateFilter = 'open'" :class="stateFilter==='open' ? 'font-semibold text-gray-800' : ''">Open</button>
+        <button @click="stateFilter = 'closed'" :class="stateFilter==='closed' ? 'font-semibold text-gray-800' : ''">Closed</button>
+        <button @click="stateFilter = ''" :class="!stateFilter ? 'font-semibold text-gray-800' : ''">All</button>
+      </div>
+      <RouterLink v-for="i in filtered" :key="i.number" :to="`/${repoUsername}/${repoName}/-/issues/${i.number}`" class="flex items-center gap-3 px-4 py-3 border-b border-gray-50 dark:border-gray-800 last:border-0 hover:bg-gray-50 dark:hover:bg-slate-800 no-underline">
+        <span :class="i.state==='open'?'text-green-500':'text-red-500'" class="text-lg leading-none shrink-0">&bull;</span>
+        <div class="flex-1 min-w-0">
+          <span class="text-sm text-gray-800 dark:text-gray-200">{{ i.title }}</span>
+          <div class="text-xs text-gray-500 mt-0.5">#{{ i.number }} &middot; {{ i.author_username }} &middot; {{ formatDate(i.created_at) }}</div>
+        </div>
+        <div v-if="i.labels?.length" class="flex gap-1 shrink-0">
+          <span v-for="l in i.labels" :key="l.id" :style="{ background: l.color + '20', color: l.color }" class="px-2 py-0.5 text-xs rounded-full">{{ l.name }}</span>
+        </div>
+      </RouterLink>
+    </div>
+    <p v-else-if="!loading" class="text-sm text-gray-500">No issues yet.</p>
+    <p v-if="loading" class="text-sm text-gray-500">Loading...</p>
+  </div>
+</template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, computed, watch } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
 import { useRepo } from "../composables/useRepo";
@@ -38,13 +35,12 @@ import { useRepo } from "../composables/useRepo";
 const route = useRoute();
 const repoUsername = route.params.username as string;
 const repoName = route.params.repo as string;
-const { repoId, loading, error } = useRepo(repoUsername, repoName);
+const { repoId, loading } = useRepo(repoUsername, repoName);
 const issues = ref<any[]>([]);
+const stateFilter = ref("open");
+const filtered = computed(() => stateFilter.value ? issues.value.filter((i: any) => i.state === stateFilter.value) : issues.value);
 
-watch(repoId, async (id) => {
-  if (!id) return;
-  try {
-    issues.value = (await api.get(`/projects/${id}/issues/`)) || [];
-  } catch {}
-});
+function formatDate(d: string) { return d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''; }
+
+watch(repoId, async (id) => { if (!id) return; try { issues.value = (await api.get(`/projects/${id}/issues/`)) || []; } catch {} });
 </script>
