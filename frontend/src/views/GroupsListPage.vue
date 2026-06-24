@@ -1,5 +1,5 @@
 <template>
-  <div class="max-w-4xl">
+  <div class="max-w-4xl mx-auto">
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-lg font-semibold">Groups</h1>
       <button @click="showNew=true" class="btn btn-accent btn-sm">New group</button>

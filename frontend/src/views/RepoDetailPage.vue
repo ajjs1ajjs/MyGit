@@ -1,5 +1,5 @@
 <template>
-  <div v-if="repo">
+  <div v-if="repo" class="max-w-5xl mx-auto">
     <div class="flex items-center gap-3 mb-5">
       <h1 class="text-lg font-semibold tracking-tight">{{ repo.name }}</h1>
       <span class="badge" :class="repo.visibility==='public'?'badge-blue':'badge-gray'">{{ repo.visibility }}</span>

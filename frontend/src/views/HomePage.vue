@@ -1,5 +1,5 @@
 <template>
-  <div class="max-w-4xl">
+  <div class="max-w-4xl mx-auto">
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-lg font-semibold">Projects</h1>
       <RouterLink v-if="auth.user" to="/projects/new" class="btn btn-accent btn-sm">New project</RouterLink>

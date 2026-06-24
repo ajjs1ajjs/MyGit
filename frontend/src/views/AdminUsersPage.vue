@@ -1,5 +1,5 @@
 <template>
-  <div class="max-w-5xl">
+  <div class="max-w-5xl mx-auto">
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-lg font-semibold">Users</h1>
       <button @click="openInvite()" class="btn btn-accent btn-sm">Invite user</button>
