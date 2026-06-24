@@ -313,6 +313,179 @@ class ProjectViewSet(viewsets.ModelViewSet):
         repo = get_object_or_404(self.get_queryset(), path=repo_path)
         return Response(RepositorySerializer(repo).data)
 
+    @action(methods=["get"], detail=False, url_path="import/github/repos")
+    def github_repos(self, request):
+        from apps.accounts.models import IntegrationToken
+        import requests
+
+        token = request.query_params.get("token")
+        if not token:
+            integration_token = IntegrationToken.objects.filter(user=request.user, provider="github").first()
+            if not integration_token:
+                return Response({"detail": "GitHub token not configured."}, status=status.HTTP_400_BAD_REQUEST)
+            token = integration_token.token
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        }
+        try:
+            resp = requests.get("https://api.github.com/user/repos?per_page=100&sort=updated", headers=headers, timeout=10)
+            if not resp.ok:
+                return Response({"detail": f"GitHub API error: {resp.text}"}, status=resp.status_code)
+
+            repos = []
+            for item in resp.json():
+                repos.append({
+                    "name": item["name"],
+                    "full_name": item["full_name"],
+                    "description": item.get("description") or "",
+                    "private": item["private"],
+                    "clone_url": item["clone_url"],
+                    "default_branch": item.get("default_branch") or "main",
+                })
+            return Response(repos)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(methods=["get"], detail=False, url_path="import/gitlab/repos")
+    def gitlab_repos(self, request):
+        from apps.accounts.models import IntegrationToken
+        import requests
+
+        token = request.query_params.get("token")
+        if not token:
+            integration_token = IntegrationToken.objects.filter(user=request.user, provider="gitlab").first()
+            if not integration_token:
+                return Response({"detail": "GitLab token not configured."}, status=status.HTTP_400_BAD_REQUEST)
+            token = integration_token.token
+
+        headers = {
+            "PRIVATE-TOKEN": token,
+        }
+        try:
+            resp = requests.get("https://gitlab.com/api/v4/projects?membership=true&simple=true&per_page=100&order_by=updated_at", headers=headers, timeout=10)
+            if not resp.ok:
+                return Response({"detail": f"GitLab API error: {resp.text}"}, status=resp.status_code)
+
+            repos = []
+            for item in resp.json():
+                repos.append({
+                    "name": item["name"],
+                    "full_name": item["path_with_namespace"],
+                    "description": item.get("description") or "",
+                    "private": item["visibility"] == "private",
+                    "clone_url": item["http_url_to_repo"],
+                    "default_branch": item.get("default_branch") or "main",
+                })
+            return Response(repos)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(methods=["post"], detail=False, url_path="import")
+    def import_project(self, request):
+        from apps.accounts.models import IntegrationToken
+        import subprocess
+        import shutil
+        from apps.git_service.hooks import install_hooks
+
+        provider = request.data.get("provider")  # "github", "gitlab", or "custom"
+        repo_name = request.data.get("repo_name")
+        clone_url = request.data.get("clone_url")
+        name = request.data.get("name")
+        visibility = request.data.get("visibility", "private")
+        description = request.data.get("description", "")
+        token = request.data.get("token")
+
+        if not name:
+            return Response({"detail": "Project name is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            validate_repository_component(name)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        path = f"{request.user.username}/{name}"
+        if Repository.objects.filter(path=path).exists():
+            return Response({"detail": "Repository already exists."}, status=status.HTTP_409_CONFLICT)
+
+        if provider in ["github", "gitlab"] and not token:
+            integration_token = IntegrationToken.objects.filter(user=request.user, provider=provider).first()
+            if integration_token:
+                token = integration_token.token
+
+        if provider == "github":
+            if not repo_name:
+                return Response({"detail": "repo_name is required for github provider."}, status=status.HTTP_400_BAD_REQUEST)
+            if token:
+                actual_clone_url = f"https://{token}@github.com/{repo_name}.git"
+            else:
+                actual_clone_url = f"https://github.com/{repo_name}.git"
+        elif provider == "gitlab":
+            if not repo_name:
+                return Response({"detail": "repo_name is required for gitlab provider."}, status=status.HTTP_400_BAD_REQUEST)
+            if token:
+                actual_clone_url = f"https://oauth2:{token}@gitlab.com/{repo_name}.git"
+            else:
+                actual_clone_url = f"https://gitlab.com/{repo_name}.git"
+        elif provider == "custom":
+            if not clone_url:
+                return Response({"detail": "clone_url is required for custom provider."}, status=status.HTTP_400_BAD_REQUEST)
+            actual_clone_url = clone_url
+        else:
+            return Response({"detail": "Invalid provider."}, status=status.HTTP_400_BAD_REQUEST)
+
+        repo = Repository.objects.create(
+            owner_type="user",
+            owner_id=request.user.id,
+            name=name,
+            path=path,
+            description=description,
+            visibility=visibility,
+            default_branch="main",
+        )
+
+        disk_path = repo.disk_path
+        disk_path.parent.mkdir(parents=True, exist_ok=True)
+
+        cmd = ["git", "clone", "--bare", actual_clone_url, str(disk_path)]
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+            if res.returncode != 0:
+                if disk_path.exists():
+                    shutil.rmtree(disk_path)
+                repo.delete()
+                err_msg = res.stderr
+                if token:
+                    err_msg = err_msg.replace(token, "********")
+                return Response({"detail": f"Clone failed: {err_msg}"}, status=status.HTTP_400_BAD_REQUEST)
+        except subprocess.TimeoutExpired:
+            if disk_path.exists():
+                shutil.rmtree(disk_path)
+            repo.delete()
+            return Response({"detail": "Clone timed out after 90 seconds."}, status=status.HTTP_408_REQUEST_TIMEOUT)
+        except Exception as e:
+            if disk_path.exists():
+                shutil.rmtree(disk_path)
+            repo.delete()
+            return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        try:
+            install_hooks(disk_path)
+            backend = GitBackend(disk_path)
+            if backend.exists():
+                repo.default_branch = backend.get_default_branch()
+                repo.size_kb = GitBackend.get_repo_size_kb(disk_path)
+                repo.save(update_fields=["default_branch", "size_kb"])
+        except Exception:
+            pass
+
+        RepositoryAccess.objects.get_or_create(
+            user=request.user, repository=repo, role=RepositoryAccess.Role.OWNER
+        )
+
+        return Response(RepositorySerializer(repo).data, status=status.HTTP_201_CREATED)
+
     def perform_destroy(self, instance):
         self._ensure_repo_role(instance, RepositoryAccess.Role.OWNER)
         backend = GitBackend(instance.disk_path)

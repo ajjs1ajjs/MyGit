@@ -7,7 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.accounts.models import PersonalAccessToken, SSHKey
+from apps.accounts.models import IntegrationToken, PersonalAccessToken, SSHKey
 
 User = get_user_model()
 
@@ -202,3 +202,52 @@ class UserViewSet(viewsets.GenericViewSet):
         token = get_object_or_404(PersonalAccessToken, id=token_id, user=user)
         token.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(methods=["get", "post"], detail=True, url_path="integration-tokens")
+    def integration_tokens(self, request, username=None):
+        user = get_object_or_404(User, username=username)
+        if user != request.user and not request.user.is_superuser:
+            return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        if request.method == "GET":
+            tokens = IntegrationToken.objects.filter(user=user)
+            data = []
+            for t in tokens:
+                masked = t.token[:4] + "****" + t.token[-4:] if len(t.token) > 8 else "****"
+                data.append({
+                    "id": t.id,
+                    "provider": t.provider,
+                    "masked_token": masked,
+                    "created_at": t.created_at,
+                })
+            return Response(data)
+
+        # POST: create or update integration token
+        provider = request.data.get("provider")
+        token = request.data.get("token")
+        if not provider or not token:
+            return Response({"detail": "provider and token are required."}, status=status.HTTP_400_BAD_REQUEST)
+        if provider not in ["github", "gitlab"]:
+            return Response({"detail": "Invalid provider."}, status=status.HTTP_400_BAD_REQUEST)
+
+        obj, created = IntegrationToken.objects.update_or_create(
+            user=user, provider=provider, defaults={"token": token}
+        )
+        masked = obj.token[:4] + "****" + obj.token[-4:] if len(obj.token) > 8 else "****"
+        return Response({
+            "id": obj.id,
+            "provider": obj.provider,
+            "masked_token": masked,
+            "created_at": obj.created_at,
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @action(methods=["delete"], detail=True, url_path="integration-tokens/(?P<provider>[^/.]+)")
+    def delete_integration_token(self, request, username=None, provider=None):
+        user = get_object_or_404(User, username=username)
+        if user != request.user and not request.user.is_superuser:
+            return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        token = get_object_or_404(IntegrationToken, user=user, provider=provider)
+        token.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+

@@ -107,3 +107,24 @@ class PersonalAccessToken(BaseModel):
         if self.expires_at is None:
             return False
         return timezone.now() > self.expires_at
+
+
+class IntegrationToken(BaseModel):
+    class Provider(models.TextChoices):
+        GITHUB = "github", "GitHub"
+        GITLAB = "gitlab", "GitLab"
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="integration_tokens")
+    provider = models.CharField(max_length=50, choices=Provider.choices)
+    token = models.CharField(max_length=255)
+
+    class Meta:
+        db_table = "accounts_integrationtoken"
+        unique_together = (("user", "provider"),)
+        verbose_name = _("integration token")
+        verbose_name_plural = _("integration tokens")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user.username} - {self.provider}"
+

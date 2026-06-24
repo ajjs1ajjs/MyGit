@@ -50,21 +50,11 @@
       <header class="topbar">
         <form @submit.prevent="search" class="flex-1"><input v-model="q" placeholder="Search..." /></form>
         <a v-if="!auth.user" href="/django-admin/" target="_blank" class="btn btn-ghost btn-sm">Admin panel</a>
-        <button v-if="auth.user" @click="showNew=true" class="btn btn-accent btn-sm">+ New project</button>
+        <RouterLink v-if="auth.user" to="/projects/new" class="btn btn-accent btn-sm">+ New project</RouterLink>
       </header>
       <main class="flex-1 overflow-y-auto p-6">
         <router-view />
       </main>
-    </div>
-    <div v-if="showNew" class="modal-overlay" @click.self="showNew=false">
-      <div class="modal">
-        <div class="card-header">Create new project <button @click="showNew=false" class="text-[#a3a3a3] hover:text-[#737373] text-lg leading-none">&times;</button></div>
-        <div class="card-body space-y-3">
-          <div><label class="text-xs font-medium mb-1 block">Project name</label><input v-model="newName" @keyup.enter="create" /></div>
-          <div class="flex gap-2"><button @click="newVis='private'" :class="newVis==='private'?'btn-accent':'btn-ghost'" class="btn btn-sm flex-1">Private</button><button @click="newVis='public'" :class="newVis==='public'?'btn-accent':'btn-ghost'" class="btn btn-sm flex-1">Public</button></div>
-          <div class="flex gap-2 pt-1"><button @click="create" :disabled="!newName" class="btn btn-accent">Create</button><button @click="showNew=false" class="btn btn-ghost">Cancel</button></div>
-        </div>
-      </div>
     </div>
     <Toast />
   </div>
@@ -72,8 +62,8 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from "vue"; import { useRouter } from "vue-router"; import { useAuthStore } from "../stores/auth"; import { api } from "../api/client"; import Toast from "./Toast.vue";
-const router = useRouter(); const auth = useAuthStore(); const q = ref(""); const repos = ref<any[]>([]); const showNew = ref(false); const newName = ref(""); const newVis = ref("private");
+const router = useRouter(); const auth = useAuthStore(); const q = ref(""); const repos = ref<any[]>([]);
 function search(){ if(q.value.trim()) router.push(`/search?q=${encodeURIComponent(q.value.trim())}`) }
-async function create(){ if(!newName.value)return; try{ const r=await api.post("/projects/",{name:newName.value,visibility:newVis.value}); showNew.value=false; newName.value=''; router.push(`/${r.path}`); }catch{} }
 onMounted(async ()=>{ if(auth.token){ auth.fetchMe(); try{ repos.value=((await api.get("/projects/"))||[]).slice(0,20) }catch{} } });
 </script>
+

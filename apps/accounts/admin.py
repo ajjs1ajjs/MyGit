@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.utils.translation import gettext_lazy as _
 
-from .models import PersonalAccessToken, SSHKey, User
+from .models import IntegrationToken, PersonalAccessToken, SSHKey, User
 
 
 @admin.register(User)
@@ -41,3 +41,11 @@ class PersonalAccessTokenAdmin(admin.ModelAdmin):
     list_display = ("user", "name", "last_used_at", "expires_at", "created_at")
     search_fields = ("user__username", "name")
     readonly_fields = ("token_hash",)
+
+
+@admin.register(IntegrationToken)
+class IntegrationTokenAdmin(admin.ModelAdmin):
+    list_display = ("user", "provider", "token", "created_at")
+    list_filter = ("provider", "created_at")
+    search_fields = ("user__username", "provider")
+

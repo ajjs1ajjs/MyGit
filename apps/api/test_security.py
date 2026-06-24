@@ -156,3 +156,86 @@ def test_public_repo_branch_create_requires_write_role():
     )
 
     assert response.status_code == 403
+
+
+@pytest.mark.django_db
+def test_integration_token_management_requires_owner():
+    from apps.accounts.models import IntegrationToken
+
+    alice = make_user("alice")
+    bob = make_user("bob")
+
+    IntegrationToken.objects.create(user=alice, provider="github", token="ghp_alice12345")
+
+    client = APIClient()
+    client.force_authenticate(user=bob)
+
+    # Bob trying to view Alice's integration tokens
+    response = client.get(f"/api/v1/users/{alice.username}/integration-tokens/")
+    assert response.status_code == 403
+
+    # Bob trying to delete Alice's integration token
+    response = client.delete(f"/api/v1/users/{alice.username}/integration-tokens/github/")
+    assert response.status_code == 403
+
+    # Alice managing her own tokens
+    client.force_authenticate(user=alice)
+    response = client.get(f"/api/v1/users/{alice.username}/integration-tokens/")
+    assert response.status_code == 200
+    assert len(response.data) == 1
+    assert response.data[0]["provider"] == "github"
+    assert response.data[0]["masked_token"] == "ghp_****2345"
+
+
+@pytest.mark.django_db
+def test_import_project_endpoint_creates_record(monkeypatch):
+    import subprocess
+    from unittest.mock import MagicMock
+    from apps.repositories.models import Repository, RepositoryAccess
+
+    owner = make_user("importer")
+    client = APIClient()
+    client.force_authenticate(user=owner)
+
+    # Mock subprocess.run to simulate successful git clone
+    mock_completed_process = MagicMock(returncode=0, stdout="", stderr="")
+    mock_run = MagicMock(return_value=mock_completed_process)
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    # Mock GitBackend size and active branch
+    from apps.git_service.backend import GitBackend
+    monkeypatch.setattr(GitBackend, "exists", lambda self: True)
+    monkeypatch.setattr(GitBackend, "get_default_branch", lambda self: "main")
+    monkeypatch.setattr(GitBackend, "get_repo_size_kb", lambda path: 42)
+
+    # Mock install_hooks
+    from apps.git_service import hooks
+    monkeypatch.setattr(hooks, "install_hooks", lambda path: None)
+
+    response = client.post(
+        "/api/v1/projects/import/",
+        {
+            "provider": "github",
+            "repo_name": "someowner/somerepo",
+            "name": "myimportedrepo",
+            "visibility": "private",
+            "description": "Imported from GitHub",
+        },
+        format="json"
+    )
+
+    assert response.status_code == 201, response.data
+    assert response.data["name"] == "myimportedrepo"
+    assert response.data["visibility"] == "private"
+    assert response.data["size_kb"] == 42
+
+    # Verify DB record
+    repo = Repository.objects.get(name="myimportedrepo")
+    assert repo.path == "importer/myimportedrepo"
+    assert repo.description == "Imported from GitHub"
+
+    # Verify owner access granted
+    access = RepositoryAccess.objects.get(repository=repo, user=owner)
+    assert access.role == RepositoryAccess.Role.OWNER
+
+

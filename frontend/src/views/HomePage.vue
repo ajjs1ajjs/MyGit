@@ -2,7 +2,7 @@
   <div class="max-w-4xl">
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-lg font-semibold">Projects</h1>
-      <button v-if="auth.user" @click="showNew=true" class="btn btn-accent btn-sm">New project</button>
+      <RouterLink v-if="auth.user" to="/projects/new" class="btn btn-accent btn-sm">New project</RouterLink>
     </div>
 
     <div v-if="!auth.user" class="card mb-6">
@@ -30,25 +30,15 @@
       </RouterLink>
     </div>
     <div v-else-if="auth.user" class="empty-state"><div class="icon">&#128193;</div><h3>No projects yet</h3><p>Create your first project to get started.</p></div>
-
-    <div v-if="showNew" class="modal-overlay" @click.self="showNew=false">
-      <div class="modal"><div class="card-header">New project <button @click="showNew=false" class="text-[#a3a3a3] hover:text-[#737373] text-lg leading-none">&times;</button></div>
-        <div class="card-body space-y-3"><div><label class="text-xs font-medium mb-1 block">Project name</label><input v-model="newName" @keyup.enter="create" /></div>
-          <div class="flex gap-2"><button @click="newVis='private'" :class="newVis==='private'?'btn-accent':'btn-ghost'" class="btn btn-sm flex-1">Private</button><button @click="newVis='public'" :class="newVis==='public'?'btn-accent':'btn-ghost'" class="btn btn-sm flex-1">Public</button></div>
-          <div class="flex gap-2 pt-1"><button @click="create" :disabled="!newName" class="btn btn-accent">Create</button><button @click="showNew=false" class="btn btn-ghost">Cancel</button></div>
-          <p v-if="newErr" class="text-xs text-[#dc2626]">{{newErr}}</p>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue"; import { useRouter } from "vue-router"; import { useAuthStore } from "../stores/auth"; import { api } from "../api/client";
 const router = useRouter(); const auth = useAuthStore();
-const repos = ref<any[]>([]); const filter = ref("all"); const showNew = ref(false); const newName = ref(""); const newVis = ref("private"); const newErr = ref("");
+const repos = ref<any[]>([]); const filter = ref("all");
 const filtered = computed(() => filter.value==='yours'&&auth.user ? repos.value.filter((r:any)=>r.path?.startsWith(auth.user!.username+'/')) : repos.value);
-async function create(){ if(!newName.value)return; try{ const r=await api.post("/projects/",{name:newName.value,visibility:newVis.value}); showNew.value=false; newName.value=''; router.push(`/${r.path}`); }catch(e:any){ newErr.value=e.message } }
 function fmt(d:string){ return d?new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'' }
 onMounted(async ()=>{ try{ repos.value=(await api.get("/projects/"))||[] }catch{} });
 </script>
+
