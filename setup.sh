@@ -114,7 +114,7 @@ EMAIL_HOST=localhost
 EMAIL_PORT=25
 EOF
 
-mkdir -p "${INSTALL_DIR}/repos" "${INSTALL_DIR}/logs" "${INSTALL_DIR}/static" "${INSTALL_DIR}/media"
+mkdir -p "${INSTALL_DIR}/repos" "${INSTALL_DIR}/backend/logs" "${INSTALL_DIR}/static" "${INSTALL_DIR}/media"
 
 cd "${INSTALL_DIR}/backend"
 DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py migrate --noinput
