@@ -7,11 +7,19 @@ echo "============================================"
 echo ""
 
 INSTALL_DIR="${INSTALL_DIR:-/opt/mygit}"
-DOMAIN="${DOMAIN:-git.example.com}"
+PORT="${PORT:-8060}"
+DETECTED_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || ip -4 addr show scope global 2>/dev/null | grep -oP 'inet \K[\d.]+' | head -1 || echo "127.0.0.1")
+DETECTED_IP="${DETECTED_IP:-127.0.0.1}"
+DOMAIN="${DOMAIN:-$DETECTED_IP}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 REPO_URL="${REPO_URL:-https://github.com/ajjs1ajjs/MyGit.git}"
+
+echo "  Server IP:  ${DETECTED_IP}"
+echo "  Port:       ${PORT}"
+echo "  Host:       ${DOMAIN}"
+echo ""
 
 if [ "$EUID" -ne 0 ]; then
     echo "Please run as root: sudo bash setup.sh"
@@ -101,12 +109,12 @@ DJANGO_SECRET_KEY=$(openssl rand -base64 48 2>/dev/null || python3 -c "import se
 
 cat > "${INSTALL_DIR}/backend/.env" <<EOF
 DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
-DJANGO_ALLOWED_HOSTS=${DOMAIN},localhost,127.0.0.1
+DJANGO_ALLOWED_HOSTS=${DOMAIN},${DETECTED_IP},localhost,127.0.0.1
 DATABASE_URL=${DB_URL}
 REDIS_URL=redis://localhost:6379/1
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
-CORS_ALLOWED_ORIGINS=https://${DOMAIN}
+CORS_ALLOWED_ORIGINS=http://${DOMAIN}:${PORT},http://${DETECTED_IP}:${PORT}
 MYGIT_REPOS_ROOT=${INSTALL_DIR}/repos
 MYGIT_SITE_NAME=MyGit
 GIT_BINARY=git
@@ -199,10 +207,10 @@ systemctl restart mygit-api mygit-git-http mygit-celery 2>/dev/null || true
 # -------------------------------------------------------------------
 echo ""
 echo "[6/7] Setting up Nginx..."
-cat > "/etc/nginx/sites-available/${DOMAIN}" <<NGINXEOF
+cat > "/etc/nginx/sites-available/mygit" <<NGINXEOF
 server {
-    listen 80;
-    server_name ${DOMAIN};
+    listen ${PORT} default_server;
+    server_name ${DOMAIN} ${DETECTED_IP} localhost;
 
     location / {
         root ${INSTALL_DIR}/static;
@@ -230,10 +238,10 @@ server {
 NGINXEOF
 
 if [ -d /etc/nginx/sites-enabled ]; then
-    ln -sf "/etc/nginx/sites-available/${DOMAIN}" "/etc/nginx/sites-enabled/${DOMAIN}"
+    ln -sf "/etc/nginx/sites-available/mygit" "/etc/nginx/sites-enabled/mygit"
     rm -f /etc/nginx/sites-enabled/default
 elif [ -d /etc/nginx/conf.d ]; then
-    cp "/etc/nginx/sites-available/${DOMAIN}" "/etc/nginx/conf.d/${DOMAIN}.conf"
+    cp "/etc/nginx/sites-available/mygit" "/etc/nginx/conf.d/mygit.conf"
 fi
 nginx -t 2>/dev/null && systemctl restart nginx 2>/dev/null || true
 
@@ -258,12 +266,10 @@ echo "============================================"
 echo "  MyGit installed successfully!"
 echo "============================================"
 echo ""
-echo "  URL:      http://${DOMAIN}"
+echo "  URL:      http://${DETECTED_IP}:${PORT}"
 echo "  Admin:    ${ADMIN_EMAIL}"
 echo "  Password: ${ADMIN_PASSWORD}"
 echo ""
 echo "  Logs:     journalctl -u mygit-api -f"
 echo "  Backup:   ${INSTALL_DIR}/backend/scripts/mygit-backup /backup"
-echo ""
-echo "  For HTTPS: certbot --nginx -d ${DOMAIN}"
 
