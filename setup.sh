@@ -152,6 +152,8 @@ cd "${INSTALL_DIR}/backend/frontend"
 npm install --silent 2>/dev/null || npm install
 npm run build 2>/dev/null || npx vite build
 cp -r dist/* "${INSTALL_DIR}/static/" 2>/dev/null || mkdir -p "${INSTALL_DIR}/static" && cp -r dist/* "${INSTALL_DIR}/static/"
+cd "${INSTALL_DIR}/backend"
+DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py collectstatic --noinput -v0
 
 # -------------------------------------------------------------------
 # [5/7] Systemd services
