@@ -13,7 +13,7 @@ DETECTED_IP="${DETECTED_IP:-127.0.0.1}"
 DOMAIN="${DOMAIN:-$DETECTED_IP}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-291263}"
 REPO_URL="${REPO_URL:-https://github.com/ajjs1ajjs/MyGit.git}"
 
 echo "  Server IP:  ${DETECTED_IP}"
@@ -101,8 +101,7 @@ echo "[3/7] Installing Python backend..."
 "${INSTALL_DIR}/venv/bin/pip" install -r "${INSTALL_DIR}/backend/requirements.txt" -q
 
 if [ -z "$ADMIN_PASSWORD" ]; then
-    ADMIN_PASSWORD=$(openssl rand -base64 16 2>/dev/null || python3 -c "import secrets;print(secrets.token_urlsafe(16))")
-    echo "  Generated admin password: $ADMIN_PASSWORD"
+    ADMIN_PASSWORD="291263"
 fi
 
 DJANGO_SECRET_KEY=$(openssl rand -base64 48 2>/dev/null || python3 -c "import secrets;print(secrets.token_urlsafe(48))")
@@ -131,7 +130,7 @@ cd "${INSTALL_DIR}/backend"
 DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py migrate --noinput
 DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py collectstatic --noinput
 
-echo "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.create_superuser('${ADMIN_EMAIL}', '${ADMIN_USERNAME}', '${ADMIN_PASSWORD}') if not User.objects.filter(email='${ADMIN_EMAIL}').exists() else None" | DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py shell 2>/dev/null || true
+echo "from django.contrib.auth import get_user_model; User = get_user_model(); user, _ = User.objects.get_or_create(email='${ADMIN_EMAIL}', defaults={'username':'${ADMIN_USERNAME}'}); user.set_password('${ADMIN_PASSWORD}'); user.is_superuser=True; user.is_staff=True; user.must_change_password=True; user.save()" | DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py shell 2>/dev/null || true
 
 VENV_BIN="${INSTALL_DIR}/venv/bin"
 

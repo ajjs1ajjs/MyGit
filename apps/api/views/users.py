@@ -68,11 +68,32 @@ class UserViewSet(viewsets.GenericViewSet):
     @action(methods=["get", "patch"], detail=False)
     def me(self, request):
         if request.method == "GET":
-            return Response(UserSerializer(request.user).data)
+            data = UserSerializer(request.user).data
+            data["must_change_password"] = request.user.must_change_password
+            return Response(data)
         serializer = UserSerializer(request.user, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+    @action(methods=["post"], detail=False)
+    def change_password(self, request):
+        current = request.data.get("current_password", "")
+        new_password = request.data.get("new_password", "")
+        if not request.user.check_password(current):
+            return Response(
+                {"detail": "Current password is incorrect."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(new_password) < 8:
+            return Response(
+                {"detail": "Password must be at least 8 characters."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        request.user.set_password(new_password)
+        request.user.must_change_password = False
+        request.user.save(update_fields=["password", "must_change_password"])
+        return Response({"detail": "Password changed."})
 
     @action(methods=["get", "post"], detail=True)
     def keys(self, request, username=None):

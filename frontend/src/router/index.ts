@@ -1,4 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
+import { useAuthStore } from "../stores/auth";
+import { api } from "../api/client";
 
 const RepoDetail = () => import("../views/RepoDetailPage.vue");
 
@@ -6,6 +8,7 @@ const routes = [
   { path: "/", name: "home", component: () => import("../views/HomePage.vue") },
   { path: "/auth/login", name: "login", component: () => import("../views/LoginPage.vue") },
   { path: "/auth/register", name: "register", component: () => import("../views/RegisterPage.vue") },
+  { path: "/auth/change-password", name: "change-password", component: () => import("../views/ChangePasswordPage.vue") },
   { path: "/:username", name: "user-profile", component: () => import("../views/UserProfilePage.vue") },
   {
     path: "/:username/:repo",
@@ -32,4 +35,22 @@ const routes = [
   { path: "/search", name: "search", component: () => import("../views/SearchPage.vue") },
 ];
 
-export default createRouter({ history: createWebHistory(), routes });
+const router = createRouter({ history: createWebHistory(), routes });
+
+router.beforeEach(async (to, from) => {
+  const auth = useAuthStore();
+  const token = localStorage.getItem("access_token");
+
+  if (token && !auth.user) {
+    try { auth.user = await api.get("/users/me/"); }
+    catch { auth.logout(); return "/auth/login"; }
+  }
+
+  if (auth.user?.must_change_password && to.name !== "change-password") {
+    return "/auth/change-password";
+  }
+
+  return true;
+});
+
+export default router;

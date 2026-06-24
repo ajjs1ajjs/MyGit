@@ -1,34 +1,25 @@
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-[#f6f8fa] dark:bg-[#0d1117] p-4">
-    <div class="w-full max-w-[320px]">
-      <div class="text-center mb-6">
-        <RouterLink to="/" class="text-2xl font-bold text-[#24292f] dark:text-white no-underline">MyGit</RouterLink>
-        <p class="text-sm text-[#656d76] mt-1">Sign in to your account</p>
+  <div class="min-h-screen bg-[#f8f9fa] flex items-center justify-center p-4">
+    <div class="w-full max-w-sm">
+      <div class="text-center mb-8">
+        <div class="text-2xl font-bold text-[#212529]">MyGit</div>
+        <p class="text-sm text-[#6c757d] mt-1">Sign in to continue</p>
       </div>
-      <div class="bg-white dark:bg-[#161b22] border border-[#e1e4e8] dark:border-[#30363d] rounded-xl shadow-sm p-5">
-        <form @submit.prevent="handle" class="space-y-3">
-          <div>
-            <label class="text-xs font-medium text-[#24292f] dark:text-[#e6edf3] block mb-1">Email address</label>
-            <input v-model="email" type="text" required />
-          </div>
-          <div>
-            <label class="text-xs font-medium text-[#24292f] dark:text-[#e6edf3] block mb-1">Password</label>
-            <input v-model="password" type="password" required />
-          </div>
-          <p v-if="error" class="text-[#cf222e] text-xs bg-[#ffebe9] border border-[#ff818240] rounded-md p-3">{{ error }}</p>
-          <button type="submit" class="btn w-full py-1.5 justify-center text-sm font-semibold" style="background:#1f883d;color:#fff;border-color:#1f883d;">Sign in</button>
+      <div class="bg-white dark:bg-[#16213e] border border-[#dee2e6] dark:border-[#2a2a4a] rounded-xl p-6 shadow-sm">
+        <form @submit.prevent="go" class="space-y-4">
+          <div><label class="text-xs font-medium text-[#212529] dark:text-white block mb-1.5">Email address</label><input v-model="email" type="text" required autocomplete="username" /></div>
+          <div><label class="text-xs font-medium text-[#212529] dark:text-white block mb-1.5">Password</label><input v-model="pass" type="password" required autocomplete="current-password" /></div>
+          <p v-if="err" class="text-xs text-white bg-[#e03131] rounded p-2.5">{{ err }}</p>
+          <button type="submit" class="btn btn-primary w-full py-2.5 text-sm font-semibold">Sign in</button>
         </form>
       </div>
-      <div class="text-center mt-4 text-xs text-[#656d76]">
-        New here? <RouterLink to="/auth/register">Create an account</RouterLink>
-      </div>
+      <p class="text-center mt-4 text-xs text-[#6c757d]">Don't have an account? <RouterLink to="/auth/register">Register</RouterLink></p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from "vue"; import { useRouter } from "vue-router"; import { useAuthStore } from "../stores/auth";
-const router = useRouter(); const auth = useAuthStore();
-const email = ref(""); const password = ref(""); const error = ref("");
-async function handle(){ try{await auth.login(email.value,password.value);router.push("/")}catch(e:any){error.value=e.message} }
+const r = useRouter(); const a = useAuthStore(); const email = ref(""); const pass = ref(""); const err = ref("");
+async function go() { try { const u = await a.login(email.value, pass.value); if (u.must_change_password) r.push("/auth/change-password"); else r.push("/"); } catch (e: any) { err.value = e.message; } }
 </script>

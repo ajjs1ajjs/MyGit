@@ -84,7 +84,12 @@ class AuthViewSet(viewsets.GenericViewSet):
         refresh = RefreshToken.for_user(user)
         return Response(
             {
-                "user": {"id": str(user.id), "username": user.username, "email": user.email},
+                "user": {
+                    "id": str(user.id),
+                    "username": user.username,
+                    "email": user.email,
+                    "must_change_password": user.must_change_password,
+                },
                 "access": str(refresh.access_token),
                 "refresh": str(refresh),
             }
