@@ -8,8 +8,10 @@ Default local login after a fresh install:
 Change this password immediately after the first login. The admin account is marked with
 `must_change_password=True`.
 
-Optional LDAP login can be enabled with `MYGIT_LDAP_ENABLED=True` plus the
-`MYGIT_LDAP_*` settings from `.env.example`. Local username/password login remains available.
+### LDAP / Active Directory Login (Вхід через домен)
+- **Автовизначення (Auto-discovery)**: Якщо сервер MyGit знаходиться в одній мережі або домені з вашим Active Directory, система автоматично знайде контролер домену, налаштує базу пошуку та дозволить увійти під доменними обліковими даними без будь-яких ручних налаштувань.
+- **Ручне налаштування**: За бажанням можна явно вказати параметри підключення в `.env` за допомогою `MYGIT_LDAP_ENABLED=True` та змінних `MYGIT_LDAP_*`.
+- **Автореєстрація**: При першому успішному доменному вході користувач автоматично реєструється в системі, після чого адміністратор може дати йому доступ до проектів та груп.
 
 Саморозгорнута Git-платформа для підприємств (аналог GitLab/Gitea).
 
