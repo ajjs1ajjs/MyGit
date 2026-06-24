@@ -19,7 +19,7 @@
           <svg class="w-4 h-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
           Search
         </RouterLink>
-        <RouterLink v-if="auth.user?.is_superuser" to="/admin/users" class="nav-item" active-class="active">
+        <RouterLink v-if="auth.user?.is_superuser" to="/manage/users" class="nav-item" active-class="active">
           <svg class="w-4 h-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
           Users
         </RouterLink>
