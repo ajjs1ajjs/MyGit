@@ -538,3 +538,79 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if backend.exists():
             backend.delete()
         instance.delete()
+
+    @action(methods=["get"], detail=False, url_path="browse-disk")
+    def browse_disk(self, request):
+        target_path = request.query_params.get("path", "")
+        import os
+        from pathlib import Path
+
+        directories = []
+        parent_path = None
+        current_path = ""
+
+        try:
+            if os.name == "nt":
+                if not target_path:
+                    import string
+                    import ctypes
+                    bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+                    for letter in string.ascii_uppercase:
+                        if bitmask & 1:
+                            directories.append(f"{letter}:\\")
+                        bitmask >>= 1
+                    current_path = ""
+                    parent_path = None
+                else:
+                    path_obj = Path(target_path).resolve(strict=True)
+                    current_path = str(path_obj)
+                    if path_obj.parent != path_obj:
+                        parent_path = str(path_obj.parent)
+
+                    for entry in os.scandir(path_obj):
+                        try:
+                            if entry.is_dir():
+                                directories.append(entry.name)
+                        except OSError:
+                            pass
+                    directories.sort(key=str.lower)
+            else:
+                if not target_path:
+                    path_obj = Path("/")
+                else:
+                    path_obj = Path(target_path).resolve(strict=True)
+
+                current_path = str(path_obj)
+                if path_obj != Path("/"):
+                    parent_path = str(path_obj.parent)
+
+                for entry in os.scandir(path_obj):
+                    try:
+                        if entry.is_dir():
+                            directories.append(entry.name)
+                    except OSError:
+                        pass
+                directories.sort(key=str.lower)
+
+            return Response({
+                "current_path": current_path,
+                "parent_path": parent_path,
+                "directories": directories
+            })
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(methods=["post"], detail=False, url_path="create-disk-folder")
+    def create_disk_folder(self, request):
+        parent_path = request.data.get("parent_path")
+        name = request.data.get("name")
+        if not parent_path or not name:
+            return Response({"detail": "parent_path and name are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from pathlib import Path
+        try:
+            target = (Path(parent_path) / name).resolve(strict=False)
+            target.mkdir(parents=True, exist_ok=True)
+            return Response({"path": str(target)})
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)

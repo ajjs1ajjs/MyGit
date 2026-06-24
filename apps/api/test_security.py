@@ -99,6 +99,28 @@ def test_repository_clean_rejects_unsafe_name():
 
 
 @pytest.mark.django_db
+def test_browse_disk_and_create_folder(tmp_path):
+    user = make_user("testuser")
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.get("/api/v1/projects/browse-disk/", {"path": str(tmp_path)})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["current_path"] is not None
+    assert "directories" in data
+
+    new_dir_name = "sub-folder"
+    response = client.post("/api/v1/projects/create-disk-folder/", {
+        "parent_path": str(tmp_path),
+        "name": new_dir_name
+    })
+    assert response.status_code == 200
+    assert response.json()["path"] == str(tmp_path / new_dir_name)
+    assert (tmp_path / new_dir_name).exists()
+
+
+@pytest.mark.django_db
 def test_webhook_management_requires_maintainer_role():
     owner = make_user("owner")
     outsider = make_user("outsider")

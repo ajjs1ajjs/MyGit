@@ -86,8 +86,17 @@
           </div>
           <div>
             <label class="text-xs font-semibold mb-1 block">Custom server storage path (optional)</label>
-            <input v-model="customDiskPath" placeholder="/var/git/my-custom-folder/repo.git" />
-            <p class="text-[10px] text-[#737373] mt-0.5">Physical directory on the server disk to initialize this repository.</p>
+            <div class="flex gap-2">
+              <input v-model="customDiskPath" placeholder="/var/git/my-custom-folder/repo.git" class="flex-1" />
+              <button 
+                type="button"
+                @click="openDiskBrowser('blank')"
+                class="btn btn-ghost border border-[#e5e5e5] dark:border-slate-800 text-xs px-3 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                Browse...
+              </button>
+            </div>
+            <p class="text-[10px] text-[#737373] mt-1">Physical directory on the server disk to initialize this repository.</p>
           </div>
           
           <p v-if="error" class="text-xs text-[#dc2626]">{{ error }}</p>
@@ -266,8 +275,17 @@
           </div>
           <div>
             <label class="text-xs font-semibold mb-1 block">Custom server storage path (optional)</label>
-            <input v-model="customDiskPath" placeholder="/var/git/my-custom-folder/repo.git" />
-            <p class="text-[10px] text-[#737373] mt-0.5">Physical directory on the server disk to initialize this repository.</p>
+            <div class="flex gap-2">
+              <input v-model="customDiskPath" placeholder="/var/git/my-custom-folder/repo.git" class="flex-1" />
+              <button 
+                type="button"
+                @click="openDiskBrowser('url')"
+                class="btn btn-ghost border border-[#e5e5e5] dark:border-slate-800 text-xs px-3 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                Browse...
+              </button>
+            </div>
+            <p class="text-[10px] text-[#737373] mt-1">Physical directory on the server disk to initialize this repository.</p>
           </div>
           
           <p v-if="error" class="text-xs text-[#dc2626]">{{ error }}</p>
@@ -329,8 +347,17 @@
           </div>
           <div>
             <label class="text-xs font-semibold mb-1 block">Custom server storage path (optional)</label>
-            <input v-model="customDiskPath" placeholder="/var/git/my-custom-folder/repo.git" />
-            <p class="text-[10px] text-[#737373] mt-0.5">Physical directory on the server disk to initialize this repository.</p>
+            <div class="flex gap-2">
+              <input v-model="customDiskPath" placeholder="/var/git/my-custom-folder/repo.git" class="flex-1" />
+              <button 
+                type="button"
+                @click="openDiskBrowser('modal')"
+                class="btn btn-ghost border border-[#e5e5e5] dark:border-slate-800 text-xs px-3 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                Browse...
+              </button>
+            </div>
+            <p class="text-[10px] text-[#737373] mt-1">Physical directory on the server disk to initialize this repository.</p>
           </div>
           
           <p v-if="error" class="text-xs text-[#dc2626]">{{ error }}</p>
@@ -341,6 +368,94 @@
             </button>
             <button @click="showImportModal = false" class="btn btn-ghost">Cancel</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Server Disk Directory Browser Modal -->
+    <div v-if="showDiskBrowser" class="modal-overlay" @click.self="showDiskBrowser = false">
+      <div class="modal max-w-xl w-full bg-slate-900 border border-slate-800 text-white rounded-xl shadow-2xl p-6 space-y-4">
+        <div class="flex justify-between items-center border-b border-slate-850 pb-3">
+          <h3 class="font-semibold text-lg flex items-center gap-2 text-white">
+            <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
+            Server Directory Browser
+          </h3>
+          <button @click="showDiskBrowser = false" class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+        </div>
+
+        <div class="space-y-2">
+          <!-- Path Navigation -->
+          <div class="flex items-center gap-2 bg-slate-950 p-2.5 rounded-lg border border-slate-850 text-sm overflow-x-auto whitespace-nowrap">
+            <button 
+              type="button"
+              @click="loadDiskPath(diskBrowserParent)" 
+              :disabled="!diskBrowserParent"
+              class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-slate-800 rounded text-xs transition"
+            >
+              &uarr; Up
+            </button>
+            <span class="text-slate-400">Current:</span>
+            <span class="font-mono text-emerald-400">{{ diskBrowserPath || 'Root / Logical Drives' }}</span>
+          </div>
+
+          <!-- Directories List -->
+          <div class="bg-slate-950 rounded-lg border border-slate-850 max-h-60 overflow-y-auto divide-y divide-slate-900">
+            <div v-if="diskBrowserLoading" class="p-4 text-center text-slate-400 text-sm">
+              Loading directories...
+            </div>
+            <div v-else-if="!diskBrowserDirs.length" class="p-4 text-center text-slate-400 text-sm">
+              No directories found.
+            </div>
+            <div 
+              v-else 
+              v-for="dir in diskBrowserDirs" 
+              :key="dir"
+              @click="selectBrowserSubdir(dir)"
+              class="flex items-center gap-2 p-2.5 hover:bg-slate-800/40 cursor-pointer transition text-sm text-slate-300 hover:text-white"
+            >
+              <svg class="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+              </svg>
+              <span class="font-mono truncate">{{ dir }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Create New Folder Form -->
+        <div class="bg-slate-950/55 p-3 rounded-lg border border-slate-850/80 space-y-2">
+          <label class="text-xs font-semibold text-slate-400 block">Create new folder here</label>
+          <div class="flex gap-2">
+            <input 
+              v-model="newFolderName" 
+              placeholder="folder-name" 
+              class="flex-1 bg-slate-900 border border-slate-800 text-sm text-white px-3 py-1.5 rounded"
+              @keyup.enter="createFolder"
+            />
+            <button 
+              type="button"
+              @click="createFolder" 
+              :disabled="!newFolderName || !diskBrowserPath"
+              class="btn btn-sm btn-ghost border border-slate-700 hover:border-slate-500 text-xs px-4"
+            >
+              Create
+            </button>
+          </div>
+          <p v-if="diskBrowserError" class="text-[11px] text-red-400 mt-1">{{ diskBrowserError }}</p>
+        </div>
+
+        <!-- Modal Actions -->
+        <div class="flex gap-2 pt-2 border-t border-slate-800">
+          <button 
+            type="button"
+            @click="confirmSelectedPath" 
+            :disabled="!diskBrowserPath"
+            class="btn btn-accent flex-1 py-2 text-sm font-medium"
+          >
+            Select Current Folder
+          </button>
+          <button type="button" @click="showDiskBrowser = false" class="btn btn-ghost py-2 text-sm font-medium">Cancel</button>
         </div>
       </div>
     </div>
@@ -631,5 +746,70 @@ async function createFromUrl() {
   } finally {
     loading.value = false;
   }
+}
+
+// Server Disk Directory Browser variables & methods
+const showDiskBrowser = ref(false);
+const diskBrowserLoading = ref(false);
+const diskBrowserPath = ref("");
+const diskBrowserParent = ref<string | null>(null);
+const diskBrowserDirs = ref<string[]>([]);
+const newFolderName = ref("");
+const diskBrowserError = ref("");
+
+async function openDiskBrowser(target: 'blank' | 'url' | 'modal') {
+  showDiskBrowser.value = true;
+  diskBrowserError.value = "";
+  newFolderName.value = "";
+  
+  let initialPath = customDiskPath.value || "";
+  await loadDiskPath(initialPath);
+}
+
+async function loadDiskPath(path: string | null) {
+  diskBrowserLoading.value = true;
+  diskBrowserError.value = "";
+  try {
+    const res = await api.get(`/projects/browse-disk/?path=${encodeURIComponent(path || "")}`);
+    diskBrowserPath.value = res.current_path;
+    diskBrowserParent.value = res.parent_path;
+    diskBrowserDirs.value = res.directories || [];
+  } catch (e: any) {
+    diskBrowserError.value = e.message || "Failed to load directories.";
+  } finally {
+    diskBrowserLoading.value = false;
+  }
+}
+
+function selectBrowserSubdir(dir: string) {
+  let newPath = "";
+  if (!diskBrowserPath.value) {
+    newPath = dir;
+  } else {
+    const endsWithSlash = diskBrowserPath.value.endsWith("/") || diskBrowserPath.value.endsWith("\\");
+    newPath = diskBrowserPath.value + (endsWithSlash ? "" : "/") + dir;
+  }
+  loadDiskPath(newPath);
+}
+
+async function createFolder() {
+  if (!newFolderName.value || !diskBrowserPath.value) return;
+  diskBrowserError.value = "";
+  try {
+    await api.post("/projects/create-disk-folder/", {
+      parent_path: diskBrowserPath.value,
+      name: newFolderName.value
+    });
+    newFolderName.value = "";
+    await loadDiskPath(diskBrowserPath.value);
+  } catch (e: any) {
+    diskBrowserError.value = e.message || "Failed to create folder.";
+  }
+}
+
+function confirmSelectedPath() {
+  if (!diskBrowserPath.value) return;
+  customDiskPath.value = diskBrowserPath.value;
+  showDiskBrowser.value = false;
 }
 </script>
