@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from django.utils.translation import gettext_lazy as _
 
 from apps.core.models import BaseModel
@@ -52,11 +52,14 @@ class MergeRequest(BaseModel):
 
     def save(self, *args, **kwargs):
         if not self.number:
-            last = MergeRequest.objects.filter(repository=self.repository).aggregate(
-                last_num=models.Max("number")
-            )["last_num"]
-            self.number = (last or 0) + 1
-        super().save(*args, **kwargs)
+            with transaction.atomic():
+                last = MergeRequest.objects.select_for_update().filter(
+                    repository=self.repository
+                ).aggregate(last_num=models.Max("number"))["last_num"]
+                self.number = (last or 0) + 1
+                super().save(*args, **kwargs)
+        else:
+            super().save(*args, **kwargs)
 
 
 class MergeRequestComment(BaseModel):

@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.db import models
 
-from apps.core.models import BaseModel, TimeStampedModel
+from apps.core.models import BaseModel
 
 
 class Pipeline(BaseModel):
@@ -37,7 +37,7 @@ class Pipeline(BaseModel):
         return self.sha[:8] if self.sha else ""
 
 
-class Job(BaseModel, TimeStampedModel):
+class Job(BaseModel):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
         RUNNING = "running", "Running"

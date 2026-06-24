@@ -1,22 +1,20 @@
-version: "3.8"
-
 services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: mygit
-      POSTGRES_USER: mygit
-      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ${POSTGRES_DB:-mygit}
+      POSTGRES_USER: ${POSTGRES_USER:-mygit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    expose:
+      - "5432"
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    expose:
+      - "6379"
     restart: unless-stopped
 
   web:
@@ -31,16 +29,21 @@ services:
       - media_volume:/app/media
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
-      - DATABASE_URL=postgres://mygit:password@db:5432/mygit
+      - DATABASE_URL=postgres://${POSTGRES_USER:-mygit}:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-mygit}
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/0
-      - DJANGO_SECRET_KEY=change-me
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-change-me}
       - DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
       - MYGIT_REPOS_ROOT=/repos
     depends_on:
       - db
       - redis
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/metrics/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   celery:
     build:
@@ -52,10 +55,10 @@ services:
       - repos:/repos
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
-      - DATABASE_URL=postgres://mygit:password@db:5432/mygit
+      - DATABASE_URL=postgres://${POSTGRES_USER:-mygit}:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-mygit}
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/0
-      - DJANGO_SECRET_KEY=change-me
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-change-me}
       - MYGIT_REPOS_ROOT=/repos
     depends_on:
       - db

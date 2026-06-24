@@ -1,5 +1,7 @@
 import logging
+from functools import wraps
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -12,7 +14,22 @@ logger = logging.getLogger("mygit")
 User = get_user_model()
 
 
+def require_internal_token(view_func):
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        token = request.META.get("HTTP_AUTHORIZATION", "")
+        expected = getattr(settings, "MYGIT_INTERNAL_API_TOKEN", "")
+        if not expected:
+            return view_func(request, *args, **kwargs)
+        if token != f"Bearer {expected}":
+            return JsonResponse({"detail": "Forbidden."}, status=403)
+        return view_func(request, *args, **kwargs)
+
+    return wrapper
+
+
 @require_GET
+@require_internal_token
 def authorized_keys(request):
     username = request.GET.get("username", "")
     try:
@@ -24,7 +41,9 @@ def authorized_keys(request):
     return JsonResponse({"keys": list(keys)})
 
 
+@csrf_exempt
 @require_POST
+@require_internal_token
 def check_access(request):
     import json
 
@@ -61,9 +80,12 @@ def check_access(request):
     if not access:
         return JsonResponse({"detail": "Access denied."}, status=403)
 
+    return JsonResponse({"detail": "Access granted."})
+
 
 @csrf_exempt
 @require_POST
+@require_internal_token
 def pre_receive(request):
     import json
 
@@ -107,6 +129,7 @@ def pre_receive(request):
 
 @csrf_exempt
 @require_POST
+@require_internal_token
 def post_receive(request):
     import json
 

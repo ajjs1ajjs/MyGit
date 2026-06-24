@@ -36,7 +36,7 @@
       git:
         repo: "{{ git_repo_url }}"
         dest: "{{ mygit_home }}/backend"
-        version: master
+        version: "{{ git_version | default('main') }}"
 
     - name: Create virtualenv
       pip:

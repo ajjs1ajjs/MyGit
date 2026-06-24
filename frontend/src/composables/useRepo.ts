@@ -10,9 +10,8 @@ export function useRepo(username: string, repoName: string) {
   async function fetch() {
     loading.value = true;
     try {
-      const all = (await api.get("/projects/")) || [];
       const path = `${username}/${repoName}`;
-      const found = all.find((r: any) => r.path === path);
+      const found = await api.get(`/projects/by-path/${path}/`);
       if (found) {
         repo.value = found;
         repoId.value = found.id;

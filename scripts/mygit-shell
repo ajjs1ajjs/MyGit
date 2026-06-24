@@ -9,6 +9,7 @@ Each key in authorized_keys has:
 SSH_ORIGINAL_COMMAND will contain e.g. "git-upload-pack 'owner/repo.git'"
 """
 import os
+import re
 import sys
 import urllib.request
 
@@ -33,6 +34,10 @@ def main():
         print(f"Command not allowed: {verb}")
         sys.exit(1)
 
+    if not re.match(r"^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+(\.git)?$", repo_path):
+        print(f"Invalid repository path: {repo_path}")
+        sys.exit(1)
+
     action = "pull" if "upload" in verb else "push"
 
     repo_api_path = repo_path[:-4] if repo_path.endswith(".git") else repo_path
@@ -41,7 +46,12 @@ def main():
         print("Access denied.")
         sys.exit(1)
 
-    repo_disk_path = os.path.join(REPOS_ROOT, repo_path)
+    repo_disk_path = os.path.realpath(os.path.join(REPOS_ROOT, repo_path))
+    repos_root_real = os.path.realpath(REPOS_ROOT)
+    if not repo_disk_path.startswith(repos_root_real + os.sep):
+        print("Access denied: path traversal detected.")
+        sys.exit(1)
+
     if not os.path.isdir(repo_disk_path):
         print(f"Repository not found: {repo_path}")
         sys.exit(1)

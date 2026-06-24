@@ -13,7 +13,8 @@ DETECTED_IP="${DETECTED_IP:-127.0.0.1}"
 DOMAIN="${DOMAIN:-$DETECTED_IP}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-291263}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(openssl rand -base64 12 2>/dev/null || python3 -c "import secrets;print(secrets.token_urlsafe(12))")}"
+DB_PASSWORD="$(openssl rand -base64 24 2>/dev/null || python3 -c "import secrets;print(secrets.token_urlsafe(24))")"
 REPO_URL="${REPO_URL:-https://github.com/ajjs1ajjs/MyGit.git}"
 
 echo "  Server IP:  ${DETECTED_IP}"
@@ -81,9 +82,9 @@ echo ""
 echo "[2/7] Setting up database..."
 if command -v pg_isready &>/dev/null; then
     systemctl start postgresql 2>/dev/null || pg_ctlcluster auto start 2>/dev/null || true
-    su - postgres -c "psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='mygit'\" 2>/dev/null | grep -q 1 || psql -c \"CREATE USER mygit WITH PASSWORD 'mygit_password';\"" 2>/dev/null || true
+    su - postgres -c "psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='mygit'\" 2>/dev/null | grep -q 1 || psql -c \"CREATE USER mygit WITH PASSWORD '${DB_PASSWORD}';\"" 2>/dev/null || true
     su - postgres -c "psql -tc \"SELECT 1 FROM pg_database WHERE datname='mygit'\" 2>/dev/null | grep -q 1 || psql -c \"CREATE DATABASE mygit OWNER mygit;\"" 2>/dev/null || true
-    DB_URL="postgres://mygit:mygit_password@localhost:5432/mygit"
+    DB_URL="postgres://mygit:${DB_PASSWORD}@localhost:5432/mygit"
     echo "  PostgreSQL configured."
 else
     DB_URL="sqlite:///${INSTALL_DIR}/backend/db.sqlite3"
@@ -101,7 +102,7 @@ echo "[3/7] Installing Python backend..."
 "${INSTALL_DIR}/venv/bin/pip" install -r "${INSTALL_DIR}/backend/requirements.txt" -q
 
 if [ -z "$ADMIN_PASSWORD" ]; then
-    ADMIN_PASSWORD="291263"
+    ADMIN_PASSWORD="$(openssl rand -base64 12)"
 fi
 
 DJANGO_SECRET_KEY=$(openssl rand -base64 48 2>/dev/null || python3 -c "import secrets;print(secrets.token_urlsafe(48))")
@@ -168,7 +169,7 @@ Description=MyGit API
 After=network.target
 
 [Service]
-User=root
+User=mygit
 WorkingDirectory=${INSTALL_DIR}/backend
 Environment="DJANGO_SETTINGS_MODULE=config.settings.production"
 EnvironmentFile=${INSTALL_DIR}/backend/.env
@@ -182,7 +183,7 @@ Description=MyGit Git HTTP
 After=network.target
 
 [Service]
-User=root
+User=mygit
 WorkingDirectory=${INSTALL_DIR}/backend
 Environment="DJANGO_SETTINGS_MODULE=config.settings.production"
 EnvironmentFile=${INSTALL_DIR}/backend/.env
@@ -196,7 +197,7 @@ Description=MyGit Celery
 After=network.target
 
 [Service]
-User=root
+User=mygit
 WorkingDirectory=${INSTALL_DIR}/backend
 Environment="DJANGO_SETTINGS_MODULE=config.settings.production"
 EnvironmentFile=${INSTALL_DIR}/backend/.env
@@ -274,7 +275,7 @@ echo "============================================"
 echo ""
 echo "  URL:      http://${DETECTED_IP}:${PORT}"
 echo "  Admin:    ${ADMIN_EMAIL}"
-echo "  Password: ${ADMIN_PASSWORD}"
+echo "  Password: (set via ADMIN_PASSWORD env var)"
 echo ""
 echo "  Logs:     journalctl -u mygit-api -f"
 echo "  Backup:   ${INSTALL_DIR}/backend/scripts/mygit-backup /backup"

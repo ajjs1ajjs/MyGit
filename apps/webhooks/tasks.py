@@ -3,6 +3,7 @@ import logging
 
 import requests
 from celery import shared_task
+from django.utils import timezone
 
 from .models import WebhookDelivery
 
@@ -63,4 +64,4 @@ def deliver_webhook(self, delivery_id: str):
     )
 
 
-from django.utils import timezone  # noqa: E402, F811
+

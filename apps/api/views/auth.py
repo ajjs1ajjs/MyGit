@@ -78,15 +78,9 @@ class AuthViewSet(viewsets.GenericViewSet):
 
         user = None
         if "@" in login_id:
-            try:
-                user = User.objects.get(email=login_id)
-            except User.DoesNotExist:
-                pass
+            user = User.objects.filter(email=login_id).first()
         if not user:
-            try:
-                user = User.objects.get(username=login_id)
-            except User.DoesNotExist:
-                pass
+            user = User.objects.filter(username=login_id).first()
 
         if not user:
             return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
@@ -129,14 +123,20 @@ class AuthViewSet(viewsets.GenericViewSet):
     @action(methods=["post"], detail=False, url_path="password-reset")
     def password_reset(self, request):
         email = request.data.get("email", "")
-        try:
-            user = User.objects.get(email=email, is_active=True)
-        except User.DoesNotExist:
-            return Response(
-                {"detail": "If this email exists, a reset link has been sent."},
-                status=status.HTTP_200_OK,
-            )
+        user = User.objects.filter(email=email, is_active=True).first()
 
+        if user:
+            import threading
+
+            thread = threading.Thread(target=self._send_reset_email, args=(user,))
+            thread.start()
+
+        return Response(
+            {"detail": "If this email exists, a reset link has been sent."},
+            status=status.HTTP_200_OK,
+        )
+
+    def _send_reset_email(self, user):
         token = token_generator.make_token(user)
         site_name = getattr(settings, "MYGIT_SITE_NAME", "MyGit")
         context = {
@@ -152,7 +152,7 @@ class AuthViewSet(viewsets.GenericViewSet):
             message=body,
             from_email=None,
             recipient_list=[user.email],
-            fail_silently=False,
+            fail_silently=True,
         )
 
         return Response(

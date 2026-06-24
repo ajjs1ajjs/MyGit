@@ -155,11 +155,8 @@ class GitBackend:
             repo.commit(ref)
             commits: list[dict] = []
             skip = (page - 1) * per_page
-            for i, c in enumerate(repo.iter_commits(ref)):
-                if i < skip:
-                    continue
-                if len(commits) >= per_page:
-                    break
+            max_count = skip + per_page
+            for c in list(repo.iter_commits(ref, max_count=max_count))[skip:]:
                 commits.append(
                     {
                         "sha": c.hexsha,

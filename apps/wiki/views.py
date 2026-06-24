@@ -1,9 +1,10 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.repositories.models import Repository
+from apps.repositories.models import Repository, RepositoryAccess
 
 from .models import WikiPage
 from .serializers import WikiPageSerializer
@@ -22,7 +23,21 @@ class WikiPageViewSet(viewsets.GenericViewSet):
 
     def _get_repo(self):
         repo_id = self.kwargs.get("project_id", "")
-        return get_object_or_404(Repository, id=repo_id)
+        repo = get_object_or_404(Repository, id=repo_id)
+        self._ensure_repo_access(repo)
+        return repo
+
+    def _ensure_repo_access(self, repo):
+        user = self.request.user
+        is_public = repo.visibility == Repository.Visibility.PUBLIC
+        is_owner = str(repo.owner_id) == str(user.id)
+        has_access = RepositoryAccess.objects.filter(
+            repository=repo, user=user, role__gte=RepositoryAccess.Role.GUEST
+        ).exists()
+        if not is_public and not is_owner and not has_access:
+            raise PermissionDenied(
+                "You do not have access to this repository."
+            )
 
     def list(self, request, project_id=None):
         pages = self.get_queryset()

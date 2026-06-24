@@ -1,5 +1,6 @@
 from django.db.models import Q
 from django.http import HttpResponse
+from django.shortcuts import get_object_or_404
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -96,6 +97,13 @@ class ProjectViewSet(viewsets.ModelViewSet):
         RepositoryAccess.objects.create(
             user=request.user, repository=new_repo, role=RepositoryAccess.Role.OWNER
         )
+        import shutil
+
+        if repo.disk_path.exists():
+            shutil.copytree(str(repo.disk_path), str(new_repo.disk_path))
+            new_repo.size_kb = GitBackend.get_repo_size_kb(new_repo.disk_path)
+            new_repo.save(update_fields=["size_kb"])
+
         return Response(RepositorySerializer(new_repo).data, status=status.HTTP_201_CREATED)
 
     def _get_backend(self, repo) -> GitBackend:
@@ -258,11 +266,20 @@ class ProjectViewSet(viewsets.ModelViewSet):
             data = backend.get_archive(ref, fmt)
             content_type = "application/gzip" if fmt == "tar.gz" else f"application/{fmt}"
             response = HttpResponse(data, content_type=content_type)
-            safe_ref = ref.replace("/", "-")
-            response["Content-Disposition"] = f'attachment; filename="{repo.name}-{safe_ref}.{fmt}"'
+            import re
+
+            safe_name = re.sub(r"[^\w\-.]", "_", repo.name)
+            safe_ref = re.sub(r"[^\w\-.]", "_", ref.replace("/", "-"))
+            filename = f"{safe_name}-{safe_ref}.{fmt}"
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
             return response
         except GitServiceError as e:
             return Response({"detail": str(e)}, status=404)
+
+    @action(methods=["get"], detail=False, url_path="by-path/(?P<repo_path>[^/]+/[^/]+)")
+    def by_path(self, request, repo_path=None):
+        repo = get_object_or_404(Repository, path=repo_path)
+        return Response(RepositorySerializer(repo).data)
 
     def perform_destroy(self, instance):
         backend = GitBackend(instance.disk_path)

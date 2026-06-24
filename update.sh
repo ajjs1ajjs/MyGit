@@ -1,4 +1,5 @@
 #!/bin/bash
+# Run as root or user with passwordless sudo access.
 set -e
 cd /opt/mygit/backend
 echo ">>> Pulling..."
