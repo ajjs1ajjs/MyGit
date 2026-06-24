@@ -11,51 +11,93 @@ DOMAIN="${DOMAIN:-git.example.com}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
-USE_DOCKER="${USE_DOCKER:-no}"
+REPO_URL="${REPO_URL:-https://github.com/ajjs1ajjs/MyGit.git}"
 
 if [ "$EUID" -ne 0 ]; then
     echo "Please run as root: sudo bash setup.sh"
     exit 1
 fi
 
+# -------------------------------------------------------------------
+# Detect Python
+# -------------------------------------------------------------------
+detect_python() {
+    for ver in 3.12 3.11 3.10 3.9 3; do
+        if command -v "python${ver}" &>/dev/null; then
+            PYTHON_BIN="python${ver}"
+            PYTHON_VER="$ver"
+            return
+        fi
+    done
+    echo "ERROR: No Python 3 found. Install python3 first." >&2
+    exit 1
+}
+detect_python
+echo "  Python: ${PYTHON_BIN}"
+
+# -------------------------------------------------------------------
+# [1/7] System packages
+# -------------------------------------------------------------------
+echo ""
 echo "[1/7] Installing system packages..."
 if command -v apt-get &>/dev/null; then
     apt-get update -qq
-    apt-get install -y -qq git python3.12 python3.12-venv python3-pip \
-        postgresql postgresql-contrib redis-server nginx certbot python3-certbot-nginx \
-        rsync curl
+    PKGS="git ${PYTHON_BIN} ${PYTHON_BIN}-venv python3-pip postgresql postgresql-contrib redis-server nginx rsync curl wget ca-certificates"
+    if [ "$PYTHON_VER" = "3" ]; then
+        PKGS="git python3 python3-venv python3-pip postgresql postgresql-contrib redis-server nginx rsync curl wget ca-certificates"
+    fi
+    apt-get install -y -qq $PKGS 2>/dev/null || apt-get install -y $PKGS
 elif command -v dnf &>/dev/null; then
-    dnf install -y git python3.12 python3-pip postgresql-server redis nginx certbot
+    dnf install -y git "${PYTHON_BIN}" python3-pip postgresql-server redis nginx rsync curl wget ca-certificates
 elif command -v yum &>/dev/null; then
-    yum install -y git python3.12 python3-pip postgresql-server redis nginx certbot
+    yum install -y git "${PYTHON_BIN}" python3-pip postgresql-server redis nginx rsync curl wget ca-certificates
 fi
 
+# -------------------------------------------------------------------
+# Clone repo
+# -------------------------------------------------------------------
+echo ""
+echo "[*] Cloning repository..."
+if [ -d "${INSTALL_DIR}/backend/.git" ]; then
+    echo "  Already cloned, pulling..."
+    cd "${INSTALL_DIR}/backend"; git pull --ff-only 2>/dev/null || true
+else
+    mkdir -p "${INSTALL_DIR}"
+    git clone --depth 1 "$REPO_URL" "${INSTALL_DIR}/backend"
+fi
+
+# -------------------------------------------------------------------
+# [2/7] Database
+# -------------------------------------------------------------------
 echo ""
 echo "[2/7] Setting up database..."
 if command -v pg_isready &>/dev/null; then
-    su - postgres -c "psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='mygit'\" | grep -q 1 || psql -c \"CREATE USER mygit WITH PASSWORD 'mygit_password';\"" 2>/dev/null || true
-    su - postgres -c "psql -tc \"SELECT 1 FROM pg_database WHERE datname='mygit'\" | grep -q 1 || psql -c \"CREATE DATABASE mygit OWNER mygit;\"" 2>/dev/null || true
+    systemctl start postgresql 2>/dev/null || pg_ctlcluster auto start 2>/dev/null || true
+    su - postgres -c "psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='mygit'\" 2>/dev/null | grep -q 1 || psql -c \"CREATE USER mygit WITH PASSWORD 'mygit_password';\"" 2>/dev/null || true
+    su - postgres -c "psql -tc \"SELECT 1 FROM pg_database WHERE datname='mygit'\" 2>/dev/null | grep -q 1 || psql -c \"CREATE DATABASE mygit OWNER mygit;\"" 2>/dev/null || true
     DB_URL="postgres://mygit:mygit_password@localhost:5432/mygit"
+    echo "  PostgreSQL configured."
 else
     DB_URL="sqlite:///${INSTALL_DIR}/backend/db.sqlite3"
     echo "  PostgreSQL not found. Using SQLite."
 fi
 
+# -------------------------------------------------------------------
+# [3/7] Python backend
+# -------------------------------------------------------------------
 echo ""
 echo "[3/7] Installing Python backend..."
-mkdir -p "${INSTALL_DIR}"
-cp -r . "${INSTALL_DIR}/backend/"
 
-python3.12 -m venv "${INSTALL_DIR}/venv"
+"${PYTHON_BIN}" -m venv "${INSTALL_DIR}/venv"
 "${INSTALL_DIR}/venv/bin/pip" install --upgrade pip -q
 "${INSTALL_DIR}/venv/bin/pip" install -r "${INSTALL_DIR}/backend/requirements.txt" -q
 
 if [ -z "$ADMIN_PASSWORD" ]; then
-    ADMIN_PASSWORD=$(openssl rand -base64 16)
+    ADMIN_PASSWORD=$(openssl rand -base64 16 2>/dev/null || python3 -c "import secrets;print(secrets.token_urlsafe(16))")
     echo "  Generated admin password: $ADMIN_PASSWORD"
 fi
 
-DJANGO_SECRET_KEY=$(openssl rand -base64 48)
+DJANGO_SECRET_KEY=$(openssl rand -base64 48 2>/dev/null || python3 -c "import secrets;print(secrets.token_urlsafe(48))")
 
 cat > "${INSTALL_DIR}/.env" <<EOF
 DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
@@ -80,23 +122,35 @@ cd "${INSTALL_DIR}/backend"
 
 echo "from django.contrib.auth import get_user_model; User = get_user_model(); User.objects.create_superuser('${ADMIN_EMAIL}', '${ADMIN_USERNAME}', '${ADMIN_PASSWORD}') if not User.objects.filter(email='${ADMIN_EMAIL}').exists() else None" | "${INSTALL_DIR}/venv/bin/python" manage.py shell 2>/dev/null || true
 
+VENV_BIN="${INSTALL_DIR}/venv/bin"
+
+# -------------------------------------------------------------------
+# [4/7] Node.js frontend
+# -------------------------------------------------------------------
 echo ""
 echo "[4/7] Installing Node.js frontend..."
-if ! command -v node &>/dev/null; then
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-    apt-get install -y nodejs 2>/dev/null || true
+NODE_BIN=$(command -v node 2>/dev/null || command -v nodejs 2>/dev/null || echo "")
+if [ -z "$NODE_BIN" ]; then
+    if command -v apt-get &>/dev/null; then
+        curl -fsSL https://deb.nodesource.com/setup_22.x | bash - 2>/dev/null || true
+        apt-get install -y nodejs 2>/dev/null || true
+    elif command -v dnf &>/dev/null; then
+        dnf module install -y nodejs:22 2>/dev/null || dnf install -y nodejs 2>/dev/null || true
+    fi
 fi
 cd "${INSTALL_DIR}/backend/frontend"
-npm install --silent
-npm run build
-cp -r dist/* "${INSTALL_DIR}/static/"
+npm install --silent 2>/dev/null || npm install
+npm run build 2>/dev/null || npx vite build
+cp -r dist/* "${INSTALL_DIR}/static/" 2>/dev/null || mkdir -p "${INSTALL_DIR}/static" && cp -r dist/* "${INSTALL_DIR}/static/"
 
+# -------------------------------------------------------------------
+# [5/7] Systemd services
+# -------------------------------------------------------------------
 echo ""
 echo "[5/7] Setting up systemd services..."
-for svc in mygit-api mygit-git-http mygit-celery; do
-    cat > "/etc/systemd/system/${svc}.service" <<SVCEND
+cat > "/etc/systemd/system/mygit-api.service" <<SVCEND
 [Unit]
-Description=MyGit - ${svc}
+Description=MyGit API
 After=network.target
 
 [Service]
@@ -104,28 +158,45 @@ User=root
 WorkingDirectory=${INSTALL_DIR}/backend
 Environment="DJANGO_SETTINGS_MODULE=config.settings.production"
 EnvironmentFile=${INSTALL_DIR}/.env
+ExecStart=${VENV_BIN}/uvicorn config.asgi:application --host 127.0.0.1 --port 8000
+Restart=always
 SVCEND
-done
 
-cat >> /etc/systemd/system/mygit-api.service <<'EOF'
-ExecStart=/opt/mygit/venv/bin/uvicorn config.asgi:application --host 127.0.0.1 --port 8000
-Restart=always
-EOF
+cat > "/etc/systemd/system/mygit-git-http.service" <<SVCEND
+[Unit]
+Description=MyGit Git HTTP
+After=network.target
 
-cat >> /etc/systemd/system/mygit-git-http.service <<'EOF'
-ExecStart=/opt/mygit/venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8001 --workers 4
+[Service]
+User=root
+WorkingDirectory=${INSTALL_DIR}/backend
+Environment="DJANGO_SETTINGS_MODULE=config.settings.production"
+EnvironmentFile=${INSTALL_DIR}/.env
+ExecStart=${VENV_BIN}/gunicorn config.wsgi:application --bind 127.0.0.1:8001 --workers 4
 Restart=always
-EOF
+SVCEND
 
-cat >> /etc/systemd/system/mygit-celery.service <<'EOF'
-ExecStart=/opt/mygit/venv/bin/celery -A config worker -l info
+cat > "/etc/systemd/system/mygit-celery.service" <<SVCEND
+[Unit]
+Description=MyGit Celery
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=${INSTALL_DIR}/backend
+Environment="DJANGO_SETTINGS_MODULE=config.settings.production"
+EnvironmentFile=${INSTALL_DIR}/.env
+ExecStart=${VENV_BIN}/celery -A config worker -l info
 Restart=always
-EOF
+SVCEND
 
 systemctl daemon-reload
-systemctl enable mygit-api mygit-git-http mygit-celery
+systemctl enable mygit-api mygit-git-http mygit-celery 2>/dev/null || true
 systemctl restart mygit-api mygit-git-http mygit-celery 2>/dev/null || true
 
+# -------------------------------------------------------------------
+# [6/7] Nginx
+# -------------------------------------------------------------------
 echo ""
 echo "[6/7] Setting up Nginx..."
 cat > "/etc/nginx/sites-available/${DOMAIN}" <<NGINXEOF
@@ -137,48 +208,62 @@ server {
         root ${INSTALL_DIR}/static;
         try_files \$uri /index.html;
     }
-
-    location /api/ { proxy_pass http://127.0.0.1:8000; proxy_set_header Host \$host; }
-    location /admin/ { proxy_pass http://127.0.0.1:8000; }
-
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+    location /admin/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+    }
     location ~ ^/(.+/.+)\\.git/ {
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host \$host;
         client_max_body_size 0;
         proxy_request_buffering off;
     }
-
     location /static/ { alias ${INSTALL_DIR}/static/; }
     location /media/ { alias ${INSTALL_DIR}/media/; }
     location /metrics/ { proxy_pass http://127.0.0.1:8000; }
 }
 NGINXEOF
 
-ln -sf "/etc/nginx/sites-available/${DOMAIN}" "/etc/nginx/sites-enabled/${DOMAIN}" 2>/dev/null || cp "/etc/nginx/sites-available/${DOMAIN}" "/etc/nginx/conf.d/${DOMAIN}.conf"
-rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-systemctl restart nginx 2>/dev/null || true
+if [ -d /etc/nginx/sites-enabled ]; then
+    ln -sf "/etc/nginx/sites-available/${DOMAIN}" "/etc/nginx/sites-enabled/${DOMAIN}"
+    rm -f /etc/nginx/sites-enabled/default
+elif [ -d /etc/nginx/conf.d ]; then
+    cp "/etc/nginx/sites-available/${DOMAIN}" "/etc/nginx/conf.d/${DOMAIN}.conf"
+fi
+nginx -t 2>/dev/null && systemctl restart nginx 2>/dev/null || true
 
+# -------------------------------------------------------------------
+# [7/7] SSH
+# -------------------------------------------------------------------
 echo ""
 echo "[7/7] Setting up SSH access..."
-cat >> /etc/ssh/sshd_config <<EOF
+grep -q "mygit-authorized-keys" /etc/ssh/sshd_config 2>/dev/null || cat >> /etc/ssh/sshd_config <<EOF
 
 # MyGit SSH
 AuthorizedKeysCommand ${INSTALL_DIR}/backend/scripts/mygit-authorized-keys
 AuthorizedKeysCommandUser root
 EOF
-systemctl restart sshd 2>/dev/null || true
+systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
 
+# -------------------------------------------------------------------
+# Done
+# -------------------------------------------------------------------
 echo ""
 echo "============================================"
 echo "  MyGit installed successfully!"
 echo "============================================"
 echo ""
-echo "  URL:      https://${DOMAIN}"
+echo "  URL:      http://${DOMAIN}"
 echo "  Admin:    ${ADMIN_EMAIL}"
 echo "  Password: ${ADMIN_PASSWORD}"
 echo ""
 echo "  Logs:     journalctl -u mygit-api -f"
 echo "  Backup:   ${INSTALL_DIR}/backend/scripts/mygit-backup /backup"
 echo ""
-echo "  (Optional) run certbot for HTTPS:"
-echo "  certbot --nginx -d ${DOMAIN}"
+echo "  For HTTPS: certbot --nginx -d ${DOMAIN}"
+
