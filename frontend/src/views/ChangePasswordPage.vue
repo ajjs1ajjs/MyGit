@@ -22,8 +22,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue"; import { useRouter } from "vue-router"; import { api } from "../api/client";
-const router = useRouter(); const cur=ref(""); const np=ref(""); const cp=ref(""); const msg=ref(""); const ok=ref(false); const busy=ref(false);
+import { ref } from "vue"; import { useRouter } from "vue-router"; import { useAuthStore } from "../stores/auth"; import { api } from "../api/client";
+const router = useRouter(); const auth = useAuthStore();
+const cur=ref(""); const np=ref(""); const cp=ref(""); const msg=ref(""); const ok=ref(false); const busy=ref(false);
 async function handle() {
   msg.value = ""; ok.value = false;
   if (np.value !== cp.value) { msg.value = "Passwords do not match."; return; }
@@ -31,8 +32,9 @@ async function handle() {
   busy.value = true;
   try {
     await api.post("/users/change_password/", { current_password: cur.value, new_password: np.value });
+    if (auth.user) auth.user.must_change_password = false;
     ok.value = true;
-    setTimeout(() => router.push("/"), 800);
+    setTimeout(() => router.push("/"), 600);
   } catch (e: any) { msg.value = e.message || "Failed. Check current password."; }
   busy.value = false;
 }
