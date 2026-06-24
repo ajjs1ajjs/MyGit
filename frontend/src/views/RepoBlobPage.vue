@@ -1,36 +1,72 @@
 <template>
   <div class="max-w-5xl mx-auto">
-      <div class="mb-3 flex items-center gap-2 text-sm">
-        <RouterLink :to="`/${repoUsername}/${repoName}`" class="text-blue-600 hover:underline">{{ repoUsername }}/{{ repoName }}</RouterLink>
+    <!-- Breadcrumbs -->
+    <div class="mb-3 flex items-center gap-2 text-sm">
+      <RouterLink :to="`/${repoUsername}/${repoName}`" class="text-blue-600 hover:underline">{{ repoUsername }}/{{ repoName }}</RouterLink>
+      <template v-if="filePathParts.length">
         <span class="text-gray-400">/</span>
-        <span>{{ filePath }}</span>
-      </div>
-      <div class="bg-white dark:bg-slate-900 border rounded-lg overflow-hidden">
-        <div class="px-4 py-2 bg-gray-100 dark:bg-slate-800 border-b text-xs font-mono text-gray-500 flex justify-between">
-          <span>{{ filePath }} ({{ lines }} lines)</span>
-          <span>{{ content?.length || 0 | 0 }} bytes</span>
-        </div>
-        <div class="overflow-x-auto">
-          <table v-if="content" class="w-full text-sm font-mono">
-            <tbody>
-              <tr v-for="(line, i) in contentLines" :key="i" class="hover:bg-gray-50 dark:hover:bg-slate-800">
-                <td class="pl-4 pr-3 py-0.5 text-right text-xs text-gray-400 select-none border-r w-12">{{ i + 1 }}</td>
-                <td class="pl-4 py-0.5 whitespace-pre-wrap break-words"><code>{{ line }}</code></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <p v-if="loading" class="text-gray-500 mt-4 text-sm">Loading...</p>
-      <p v-if="error" class="text-red-500 mt-4 text-sm">{{ error }}</p>
+        <template v-for="(part, idx) in filePathParts" :key="idx">
+          <RouterLink v-if="idx < filePathParts.length - 1" :to="getBreadcrumbLink(idx)" class="text-blue-600 hover:underline">{{ part }}</RouterLink>
+          <span v-else class="text-gray-600 dark:text-gray-300 font-semibold">{{ part }}</span>
+          <span v-if="idx < filePathParts.length - 1" class="text-gray-400">/</span>
+        </template>
+      </template>
     </div>
-  </template>
+
+    <!-- Blob Card -->
+    <div class="bg-white dark:bg-slate-900 border rounded-lg overflow-hidden">
+      <div class="px-4 py-2 bg-gray-100 dark:bg-slate-800 border-b text-xs font-mono text-gray-500 flex justify-between items-center">
+        <span>{{ filePath }} ({{ lines }} lines)</span>
+        <div class="flex items-center gap-4">
+          <!-- View Mode Switcher for Markdown -->
+          <div v-if="isMarkdown" class="flex border rounded overflow-hidden">
+            <button 
+              @click="viewMode = 'preview'" 
+              :class="viewMode === 'preview' ? 'bg-blue-600 text-white border-blue-600' : 'bg-transparent text-gray-500 hover:bg-gray-200 dark:hover:bg-slate-700'"
+              class="px-2.5 py-1 text-[10px] border-0 cursor-pointer font-sans font-medium transition-colors"
+            >
+              Preview
+            </button>
+            <button 
+              @click="viewMode = 'source'" 
+              :class="viewMode === 'source' ? 'bg-blue-600 text-white border-blue-600' : 'bg-transparent text-gray-500 hover:bg-gray-200 dark:hover:bg-slate-700'"
+              class="px-2.5 py-1 text-[10px] border-0 cursor-pointer font-sans font-medium transition-colors"
+            >
+              Source
+            </button>
+          </div>
+          <span>{{ content?.length || 0 }} bytes</span>
+        </div>
+      </div>
+      
+      <div class="overflow-x-auto">
+        <!-- Rendered Markdown View -->
+        <div v-if="isMarkdown && viewMode === 'preview'" class="p-6 markdown-body" v-html="renderedMarkdown"></div>
+
+        <!-- Code Source View -->
+        <table v-else-if="content" class="w-full text-sm font-mono">
+          <tbody>
+            <tr v-for="(line, i) in contentLines" :key="i" class="hover:bg-gray-50 dark:hover:bg-slate-800">
+              <td class="pl-4 pr-3 py-0.5 text-right text-xs text-gray-400 select-none border-r w-12">{{ i + 1 }}</td>
+              <td class="pl-4 py-0.5 whitespace-pre-wrap break-words"><code>{{ line }}</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <p v-if="loading" class="text-gray-500 mt-4 text-sm">Loading...</p>
+    <p v-if="error" class="text-red-500 mt-4 text-sm">{{ error }}</p>
+  </div>
+</template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from "vue";
+import { ref, computed, watch, nextTick } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
 import { useRepo } from "../composables/useRepo";
+import { marked } from "marked";
+import hljs from "highlight.js";
+import "highlight.js/styles/github-dark.css";
 
 const route = useRoute();
 const repoUsername = route.params.username as string;
@@ -41,8 +77,32 @@ const { repoId, loading, error } = useRepo(repoUsername, repoName);
 
 const content = ref("");
 const lines = ref(0);
+const viewMode = ref("preview"); // "preview" | "source"
 
 const contentLines = computed(() => content.value.split("\n"));
+
+const filePathParts = computed(() => {
+  if (!filePath) return [];
+  return filePath.split("/");
+});
+
+const isMarkdown = computed(() => {
+  return filePath.toLowerCase().endsWith(".md");
+});
+
+const renderedMarkdown = computed(() => {
+  if (!content.value) return "";
+  try {
+    return marked.parse(content.value);
+  } catch (e) {
+    return content.value;
+  }
+});
+
+function getBreadcrumbLink(index: number) {
+  const parts = filePathParts.value.slice(0, index + 1);
+  return `/${repoUsername}/${repoName}/-/tree/${refParam}/${parts.join("/")}`;
+}
 
 watch(repoId, async (id) => {
   if (!id) return;
@@ -57,4 +117,15 @@ watch(repoId, async (id) => {
     error.value = e.message;
   }
 });
+
+watch([renderedMarkdown, viewMode], () => {
+  if (viewMode.value === "preview" && isMarkdown.value) {
+    nextTick(() => {
+      document.querySelectorAll(".markdown-body pre code").forEach((el) => {
+        hljs.highlightElement(el as HTMLElement);
+      });
+    });
+  }
+}, { immediate: true });
 </script>
+

@@ -52,6 +52,7 @@ class UserViewSet(viewsets.GenericViewSet):
     queryset = User.objects.all()
     permission_classes = [IsAuthenticated]
     lookup_field = "username"
+    lookup_value_regex = r"[^/]+"
 
     def get_serializer_class(self):
         if self.action in ("ssh_keys",):

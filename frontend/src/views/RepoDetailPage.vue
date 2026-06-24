@@ -18,8 +18,8 @@
     </div>
     <router-view v-if="route.matched.length > 1" />
     <div v-else class="flex gap-6 flex-col lg:flex-row">
-      <div class="flex-1 min-w-0">
-        <div class="card mb-4">
+      <div class="flex-1 min-w-0 space-y-4">
+        <div class="card">
           <div class="card-header">Recent commits</div>
           <div v-if="commits.length" class="divide-y">
             <RouterLink v-for="c in commits.slice(0,8)" :key="c.sha" :to="`/${repo.path}/-/commit/${c.sha}`" class="flex items-center gap-3 px-5 py-2.5 text-sm hover:bg-[#f5f5f5] dark:hover:bg-[#1a1a1a] !no-underline">
@@ -30,6 +30,7 @@
           </div>
           <div v-else class="empty-state"><div class="icon">&#128194;</div><h3>No commits yet</h3><p>Push your first commit to get started.</p></div>
         </div>
+        
         <div class="card">
           <div class="card-header">Files <span class="font-normal text-xs text-[#a3a3a3] bg-[#f3f4f6] dark:bg-[#262626] px-2 py-0.5 rounded-full font-mono">{{repo.default_branch}}</span></div>
           <div v-if="tree.length" class="divide-y">
@@ -41,9 +42,31 @@
           </div>
           <div v-else class="empty-state"><div class="icon">&#128229;</div><h3>Empty repository</h3><p>Clone and push to populate.</p></div>
         </div>
+
+        <!-- Dynamic README Card -->
+        <div v-if="readmeContent" class="card">
+          <div class="card-header border-b px-5 py-3 font-semibold text-sm flex items-center gap-2">
+            <span>📖</span> README.md
+          </div>
+          <div class="card-body p-6 markdown-body" v-html="renderedReadme"></div>
+        </div>
       </div>
+      
       <div class="w-[252px] shrink-0 max-lg:w-full space-y-4">
-        <div class="card"><div class="card-body !p-4 text-xs"><div class="font-semibold text-xs mb-2">Clone</div><div class="bg-[#f5f5f5] dark:bg-[#0a0a0a] rounded p-2.5 font-mono break-all select-all leading-relaxed">{{cloneUrl}}</div></div></div>
+        <div class="card">
+          <div class="card-body !p-4 text-xs">
+            <div class="font-semibold text-xs mb-2">Clone</div>
+            <div class="flex items-center gap-2 bg-[#f5f5f5] dark:bg-[#0a0a0a] rounded p-2.5 font-mono break-all select-all leading-relaxed">
+              <span class="flex-1 select-all">{{ cloneUrl }}</span>
+              <button @click="copyCloneUrl" class="btn btn-ghost p-1.5 min-h-0 shrink-0 hover:bg-[#e5e5e5] dark:hover:bg-[#1a1a1a] transition-colors rounded cursor-pointer" title="Copy to clipboard">
+                <svg class="w-4 h-4 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
         <div class="card"><div class="card-body !p-4"><div class="font-semibold text-xs mb-3">About</div><div class="grid grid-cols-2 gap-x-2 gap-y-1.5 text-xs"><span class="text-[#737373]">Commits</span><span>{{commits.length}}</span><span class="text-[#737373]">Branches</span><span>{{branches.length}}</span><span class="text-[#737373]">Tags</span><span>{{tags.length}}</span><span class="text-[#737373]">Size</span><span>{{repo.size_kb>0?(repo.size_kb/1024).toFixed(1)+' MB':'0'}}</span></div></div></div>
         <div class="card" v-if="repo.description"><div class="card-body !p-4"><div class="font-semibold text-xs mb-1">Description</div><p class="text-xs text-[#737373]">{{repo.description}}</p></div></div>
       </div>
@@ -54,11 +77,78 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from "vue"; import { useRoute } from "vue-router"; import { api } from "../api/client"; import { useRepo } from "../composables/useRepo";
-const route = useRoute(); const repoUsername = route.params.username as string; const repoName = route.params.repo as string;
+import { ref, computed, watch, nextTick } from "vue";
+import { useRoute } from "vue-router";
+import { api } from "../api/client";
+import { useRepo } from "../composables/useRepo";
+import { useNotificationStore } from "../stores/notification";
+import { marked } from "marked";
+import hljs from "highlight.js";
+import "highlight.js/styles/github-dark.css";
+
+const route = useRoute();
+const repoUsername = route.params.username as string;
+const repoName = route.params.repo as string;
 const { repo, repoId, loading, error } = useRepo(repoUsername, repoName);
-const commits = ref<any[]>([]); const branches = ref<any[]>([]); const tags = ref<any[]>([]); const tree = ref<any[]>([]);
+const notifications = useNotificationStore();
+
+const commits = ref<any[]>([]);
+const branches = ref<any[]>([]);
+const tags = ref<any[]>([]);
+const tree = ref<any[]>([]);
+const readmeContent = ref("");
+
 const cloneUrl = computed(() => `http://${window.location.host}/${repo.value?.path}.git`);
-function fmt(d: string) { return d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''; }
-watch(repoId, async (id) => { if (!id) return; try { const[c,b,t,tr]=await Promise.all([api.get(`/projects/${id}/commits/`),api.get(`/projects/${id}/branches/`),api.get(`/projects/${id}/tags/`),api.get(`/projects/${id}/tree/?ref=${repo.value?.default_branch||'main'}`)]); commits.value=c||[]; branches.value=b||[]; tags.value=t||[]; tree.value=tr||[]; } catch {} });
+
+const renderedReadme = computed(() => {
+  if (!readmeContent.value) return "";
+  try {
+    return marked.parse(readmeContent.value);
+  } catch (e) {
+    return readmeContent.value;
+  }
+});
+
+function fmt(d: string) {
+  return d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+}
+
+function copyCloneUrl() {
+  navigator.clipboard.writeText(cloneUrl.value);
+  notifications.show("Clone URL copied to clipboard!", "success");
+}
+
+watch(repoId, async (id) => {
+  if (!id) return;
+  try {
+    const [c, b, t, tr] = await Promise.all([
+      api.get(`/projects/${id}/commits/`),
+      api.get(`/projects/${id}/branches/`),
+      api.get(`/projects/${id}/tags/`),
+      api.get(`/projects/${id}/tree/?ref=${repo.value?.default_branch || 'main'}`)
+    ]);
+    commits.value = c || [];
+    branches.value = b || [];
+    tags.value = t || [];
+    tree.value = tr || [];
+
+    // Search root tree for README.md
+    const readmeEntry = (tr || []).find((e: any) => e.type === 'blob' && e.name.toLowerCase() === 'readme.md');
+    if (readmeEntry) {
+      const readmeData = await api.get(`/projects/${id}/blobs/0/?ref=${repo.value?.default_branch || 'main'}&path=${encodeURIComponent(readmeEntry.name)}`);
+      readmeContent.value = readmeData?.content || "";
+    } else {
+      readmeContent.value = "";
+    }
+  } catch {}
+});
+
+watch(readmeContent, () => {
+  nextTick(() => {
+    document.querySelectorAll(".markdown-body pre code").forEach((el) => {
+      hljs.highlightElement(el as HTMLElement);
+    });
+  });
+});
 </script>
+
