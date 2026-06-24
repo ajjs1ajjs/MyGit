@@ -1,6 +1,5 @@
 <template>
-  <AppLayout>
-    <div class="max-w-4xl mx-auto" v-if="issue">
+  <div class="max-w-4xl mx-auto" v-if="issue">
       <div class="mb-4">
         <RouterLink :to="`/${repoUsername}/${repoName}/-/issues`" class="text-sm text-blue-600 hover:underline">&larr; Issues</RouterLink>
       </div>
@@ -55,15 +54,13 @@
       <p v-if="loading" class="text-gray-500">Loading...</p>
       <p v-else class="text-red-500">{{ error }}</p>
     </div>
-  </AppLayout>
-</template>
+  </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
 import { marked } from "marked";
-import AppLayout from "../components/AppLayout.vue";
 import { useRepo } from "../composables/useRepo";
 
 const route = useRoute();

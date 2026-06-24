@@ -1,6 +1,5 @@
 <template>
-  <AppLayout>
-    <div class="max-w-5xl mx-auto">
+  <div class="max-w-5xl mx-auto">
       <div class="mb-3 flex items-center gap-2 text-sm">
         <RouterLink :to="`/${repoUsername}/${repoName}`" class="text-blue-600 hover:underline">{{ repoUsername }}/{{ repoName }}</RouterLink>
         <span class="text-gray-400">/</span>
@@ -25,14 +24,12 @@
       <p v-if="loading" class="text-gray-500 mt-4 text-sm">Loading...</p>
       <p v-if="error" class="text-red-500 mt-4 text-sm">{{ error }}</p>
     </div>
-  </AppLayout>
-</template>
+  </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
-import AppLayout from "../components/AppLayout.vue";
 import { useRepo } from "../composables/useRepo";
 
 const route = useRoute();

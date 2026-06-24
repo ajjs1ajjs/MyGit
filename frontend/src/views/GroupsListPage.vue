@@ -1,6 +1,5 @@
 <template>
-  <AppLayout>
-    <div class="max-w-4xl mx-auto">
+  <div class="max-w-4xl mx-auto">
       <h2 class="font-semibold mb-3">Groups</h2>
       <div v-if="groups.length" class="grid gap-3">
         <RouterLink v-for="g in groups" :key="g.id" :to="`/groups/${g.id}`" class="p-4 border rounded-lg block hover:shadow">
@@ -9,14 +8,11 @@
         </RouterLink>
       </div>
     </div>
-  </AppLayout>
-</template>
+  </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { api } from "../api/client";
-import AppLayout from "../components/AppLayout.vue";
-
 const groups = ref<any[]>([]);
 onMounted(async () => {
   try {

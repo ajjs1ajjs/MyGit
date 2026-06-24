@@ -1,6 +1,5 @@
 <template>
-  <AppLayout>
-    <div class="max-w-4xl mx-auto" v-if="mr">
+  <div class="max-w-4xl mx-auto" v-if="mr">
       <div class="mb-4">
         <RouterLink :to="`/${repoUsername}/${repoName}/-/merge_requests`" class="text-sm text-blue-600 hover:underline">&larr; Merge Requests</RouterLink>
       </div>
@@ -53,15 +52,13 @@
       <p v-if="loading" class="text-gray-500">Loading...</p>
       <p v-else class="text-red-500">{{ error }}</p>
     </div>
-  </AppLayout>
-</template>
+  </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "../api/client";
 import { marked } from "marked";
-import AppLayout from "../components/AppLayout.vue";
 import FileDiff from "../components/FileDiff.vue";
 import { useRepo } from "../composables/useRepo";
 

@@ -1,20 +1,16 @@
 <template>
-  <AppLayout>
-    <div class="max-w-4xl mx-auto">
+  <div class="max-w-4xl mx-auto">
       <h2 class="font-semibold mb-3">{{ group?.path }}</h2>
       <div v-if="projects.length" class="grid gap-3">
         <RouterLink v-for="p in projects" :key="p.id" :to="`/${p.path}`" class="p-4 border rounded-lg block">{{ p.name }}</RouterLink>
       </div>
     </div>
-  </AppLayout>
-</template>
+  </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
-import AppLayout from "../components/AppLayout.vue";
-
 const route = useRoute();
 const group = ref<any>(null);
 const projects = ref<any[]>([]);

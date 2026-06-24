@@ -1,6 +1,5 @@
 <template>
-  <AppLayout>
-    <div class="max-w-2xl mx-auto">
+  <div class="max-w-2xl mx-auto">
       <h1 class="text-xl font-bold mb-6">Repository Settings</h1>
       <div class="bg-white dark:bg-slate-800 border rounded-lg p-4 mb-6" v-if="repo">
         <h3 class="font-semibold mb-3">{{ repo.path }}</h3>
@@ -45,14 +44,12 @@
         </div>
       </div>
     </div>
-  </AppLayout>
-</template>
+  </template>
 
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "../api/client";
-import AppLayout from "../components/AppLayout.vue";
 import { useRepo } from "../composables/useRepo";
 
 const route = useRoute();

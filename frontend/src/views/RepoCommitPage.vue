@@ -1,6 +1,5 @@
 <template>
-  <AppLayout>
-    <div class="max-w-4xl mx-auto" v-if="commit">
+  <div class="max-w-4xl mx-auto" v-if="commit">
       <div class="mb-4">
         <RouterLink :to="`/${repoUsername}/${repoName}/-/commits/${commitSha}`" class="text-sm text-blue-600 hover:underline">&larr; Commits</RouterLink>
       </div>
@@ -24,14 +23,12 @@
       <p v-if="loading" class="text-gray-500">Loading...</p>
       <p v-else class="text-red-500">{{ error }}</p>
     </div>
-  </AppLayout>
-</template>
+  </template>
 
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
-import AppLayout from "../components/AppLayout.vue";
 import FileDiff from "../components/FileDiff.vue";
 import { useRepo } from "../composables/useRepo";
 

@@ -1,6 +1,5 @@
 <template>
-  <AppLayout>
-    <div class="max-w-3xl mx-auto">
+  <div class="max-w-3xl mx-auto">
       <div class="flex items-center justify-between mb-4">
         <h2 class="font-semibold">Wiki</h2>
         <button @click="showNew = true" class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700">New page</button>
@@ -44,15 +43,13 @@
         </div>
       </div>
     </div>
-  </AppLayout>
-</template>
+  </template>
 
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
 import { marked } from "marked";
-import AppLayout from "../components/AppLayout.vue";
 import { useRepo } from "../composables/useRepo";
 
 const route = useRoute();

@@ -1,6 +1,5 @@
 <template>
-  <AppLayout>
-    <div class="max-w-4xl mx-auto">
+  <div class="max-w-4xl mx-auto">
       <div class="flex items-center gap-4 mb-6">
         <div class="w-16 h-16 rounded-full bg-blue-500 flex items-center justify-center text-white text-xl font-bold">{{ initials }}</div>
         <div>
@@ -24,15 +23,12 @@
       <p v-else-if="!loading" class="text-gray-500 text-sm">No repositories yet.</p>
       <p v-if="loading" class="text-sm text-gray-500">Loading...</p>
     </div>
-  </AppLayout>
-</template>
+  </template>
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
-import AppLayout from "../components/AppLayout.vue";
-
 const route = useRoute();
 const username = route.params.username as string;
 const profile = ref<any>(null);

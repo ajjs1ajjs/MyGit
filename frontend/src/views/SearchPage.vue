@@ -1,6 +1,5 @@
 <template>
-  <AppLayout>
-    <div class="max-w-4xl mx-auto">
+  <div class="max-w-4xl mx-auto">
       <h2 class="font-semibold mb-3">Search</h2>
       <p v-if="!results" class="text-gray-500">Enter a query to search.</p>
       <div v-for="(items, category) in results" :key="category" class="mb-4">
@@ -10,15 +9,12 @@
         </div>
       </div>
     </div>
-  </AppLayout>
-</template>
+  </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
-import AppLayout from "../components/AppLayout.vue";
-
 const route = useRoute();
 const results = ref<any>(null);
 

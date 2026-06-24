@@ -1,6 +1,5 @@
 <template>
-  <AppLayout>
-    <div class="max-w-2xl mx-auto">
+  <div class="max-w-2xl mx-auto">
       <div class="mb-4">
         <RouterLink :to="`/${repoUsername}/${repoName}/-/issues`" class="text-sm text-blue-600 hover:underline">&larr; Issues</RouterLink>
       </div>
@@ -14,14 +13,12 @@
         </button>
       </form>
     </div>
-  </AppLayout>
-</template>
+  </template>
 
 <script setup lang="ts">
 import { ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "../api/client";
-import AppLayout from "../components/AppLayout.vue";
 import { useRepo } from "../composables/useRepo";
 
 const route = useRoute();

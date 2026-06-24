@@ -1,6 +1,5 @@
 <template>
-  <AppLayout>
-    <div class="max-w-4xl mx-auto">
+  <div class="max-w-4xl mx-auto">
       <div class="mb-3 text-sm text-gray-500">
         <RouterLink :to="`/${repoUsername}/${repoName}`" class="text-blue-600 hover:underline">{{ repoUsername }}/{{ repoName }}</RouterLink>
         <span v-if="pathParts.length"> / <template v-for="(part, idx) in pathParts" :key="idx">
@@ -28,14 +27,12 @@
       <p v-else-if="!loading" class="text-gray-500 text-sm">Empty directory.</p>
       <p v-if="loading" class="text-gray-500 text-sm">Loading...</p>
     </div>
-  </AppLayout>
-</template>
+  </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
-import AppLayout from "../components/AppLayout.vue";
 import { useRepo } from "../composables/useRepo";
 
 const route = useRoute();
