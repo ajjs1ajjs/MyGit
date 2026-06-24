@@ -159,6 +159,13 @@ DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/pytho
 # -------------------------------------------------------------------
 echo ""
 echo "[5/7] Setting up systemd services..."
+
+# Create mygit system user if not exists
+if ! id -u mygit &>/dev/null; then
+    useradd -r -s /bin/bash -d "${INSTALL_DIR}" mygit
+fi
+chown -R mygit:mygit "${INSTALL_DIR}/backend" "${INSTALL_DIR}/venv" "${INSTALL_DIR}/repos" "${INSTALL_DIR}/static" "${INSTALL_DIR}/media" 2>/dev/null || true
+
 cat > "/etc/systemd/system/mygit-api.service" <<SVCEND
 [Unit]
 Description=MyGit API
