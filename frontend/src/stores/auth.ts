@@ -5,7 +5,7 @@ import { api } from "../api/client";
 interface User {
   id: string; username: string; email: string;
   full_name?: string; bio?: string; avatar?: string;
-  must_change_password?: boolean;
+  must_change_password?: boolean; is_superuser?: boolean;
 }
 
 export const useAuthStore = defineStore("auth", () => {
