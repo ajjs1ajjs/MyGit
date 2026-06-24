@@ -50,7 +50,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--c-accent); box-s
 .tab.active { color: var(--c-accent); border-bottom-color: var(--c-accent); }
 .tab .count { font-size: 11px; color: var(--c-muted); margin-left: 4px; }
 
-.sidebar { width: 240px; background: #1e293b; color: #e2e8f0; height: 100vh; display: flex; flex-direction: column; flex-shrink: 0; }
+.sidebar { width: 240px; background: #1e293b; color: #e2e8f0; display: flex; flex-direction: column; flex-shrink: 0; }
 .sidebar a { color: #cbd5e1; }
 .sidebar .logo { padding: 18px 20px; font-weight: 700; font-size: 18px; color: #fff; border-bottom: 1px solid #334155; }
 .sidebar .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 20px; font-size: 13px; font-weight: 500; }

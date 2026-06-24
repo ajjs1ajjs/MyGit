@@ -93,7 +93,18 @@ class GitBackend:
 
         return stdout
 
+    def has_commits(self) -> bool:
+        repo = self.get_repo()
+        try:
+            return bool(repo.heads)
+        except Exception:
+            return False
+        finally:
+            repo.close()
+
     def get_tree(self, ref: str = "HEAD", path: str = "") -> list[dict]:
+        if not self.has_commits():
+            return []
         repo = self.get_repo()
         try:
             commit = repo.commit(ref)
@@ -137,6 +148,8 @@ class GitBackend:
             repo.close()
 
     def get_commits(self, ref: str = "HEAD", page: int = 1, per_page: int = 20) -> list[dict]:
+        if not self.has_commits():
+            return []
         repo = self.get_repo()
         try:
             repo.commit(ref)
@@ -162,6 +175,8 @@ class GitBackend:
             repo.close()
 
     def get_commit(self, sha: str) -> dict | None:
+        if not self.has_commits():
+            return None
         repo = self.get_repo()
         try:
             c = repo.commit(sha)
