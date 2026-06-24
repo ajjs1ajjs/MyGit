@@ -62,11 +62,11 @@ input:focus, textarea:focus, select:focus { border-color: var(--c-accent); box-s
 .topbar { height: 56px; background: var(--c-surface); border-bottom: 1px solid var(--c-border); display: flex; align-items: center; padding: 0 24px; gap: 16px; }
 .topbar input { width: 320px; padding: 6px 12px; font-size: 13px; background: var(--c-bg); }
 
-.navtabs { display: flex; gap: 0; border-bottom: 2px solid var(--c-border); margin-bottom: 24px; }
-.navtabs a, .navtabs button { padding: 10px 16px; font-size: 14px; font-weight: 500; color: var(--c-muted); text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all .15s; background: none; border-top: none; border-left: none; border-right: none; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; gap: 4px; }
-.navtabs a:hover, .navtabs button:hover { color: var(--c-text); }
-.navtabs a.active, .navtabs button.active { color: var(--c-text); border-bottom-color: var(--c-accent); }
-.navtabs .counter { font-size: 11px; background: #e9ecef; padding: 0 6px; border-radius: 10px; color: var(--c-muted); }
+.navtabs { display: flex; gap: 0; border-bottom: 2px solid var(--c-border); margin-bottom: 24px; overflow-x: auto; }
+.navtabs a { display: inline-flex; align-items: center; gap: 4px; padding: 10px 16px; font-size: 14px; font-weight: 500; color: var(--c-muted); text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -2px; white-space: nowrap; transition: all .15s; cursor: pointer; }
+.navtabs a:hover { color: var(--c-text); text-decoration: none; }
+.navtabs a.active { color: var(--c-text); border-bottom-color: var(--c-accent); }
+.navtabs .counter { font-size: 11px; background: #e9ecef; padding: 0 6px; border-radius: 10px; color: var(--c-muted); margin-left: 2px; }
 
 table { width: 100%; border-collapse: collapse; }
 th { text-align: left; padding: 8px 12px; font-size: 12px; font-weight: 600; color: var(--c-muted); text-transform: uppercase; letter-spacing: .3px; border-bottom: 2px solid var(--c-border); }
