@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc -b && vite build",
+    "build": "vue-tsc --noEmit && vite build",
+    "clean": "rm -f src/**/*.js src/**/*.vue.js tsconfig.tsbuildinfo",
     "preview": "vite preview"
   },
   "dependencies": {
