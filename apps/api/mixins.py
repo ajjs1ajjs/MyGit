@@ -18,6 +18,9 @@ def ensure_repo_access(
     ):
         return repo
 
+    if user and getattr(user, "is_superuser", False):
+        return repo
+
     if str(repo.owner_id) == str(user.id):
         return repo
 

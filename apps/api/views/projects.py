@@ -73,6 +73,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        if user and getattr(user, "is_superuser", False):
+            return Repository.objects.all().order_by("-updated_at")
         return (
             Repository.objects.filter(
                 Q(visibility=Repository.Visibility.PUBLIC)
