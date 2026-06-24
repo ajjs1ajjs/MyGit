@@ -6,6 +6,8 @@ ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS")
 
 SECRET_KEY = env("DJANGO_SECRET_KEY")
 
+STATIC_ROOT = "/opt/mygit/static"
+
 DATABASES = {
     "default": env.db("DATABASE_URL"),
 }
