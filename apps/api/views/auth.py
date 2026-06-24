@@ -1,6 +1,8 @@
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.mail import send_mail
 from django.template.loader import render_to_string
 from django.utils import timezone
@@ -12,13 +14,15 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from apps.accounts.ldap_auth import authenticate_ldap_user
+
 User = get_user_model()
 token_generator = PasswordResetTokenGenerator()
 
 
 class RegisterSerializer(serializers.Serializer):
     username = serializers.CharField(max_length=150)
-    email = serializers.EmailField()
+    email = serializers.EmailField(required=False, allow_blank=True)
     password = serializers.CharField(min_length=8, write_only=True)
     full_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
 
@@ -28,14 +32,23 @@ class RegisterSerializer(serializers.Serializer):
         return value
 
     def validate_email(self, value):
+        if not value:
+            return value
         if User.objects.filter(email=value).exists():
             raise serializers.ValidationError("Email already registered.")
         return value
 
+    def validate_password(self, value):
+        try:
+            validate_password(value)
+        except DjangoValidationError as e:
+            raise serializers.ValidationError(list(e.messages)) from e
+        return value
+
     def create(self, validated_data):
         user = User.objects.create_user(
-            email=validated_data["email"],
             username=validated_data["username"],
+            email=validated_data.get("email", ""),
             password=validated_data["password"],
             full_name=validated_data.get("full_name", ""),
         )
@@ -76,16 +89,15 @@ class AuthViewSet(viewsets.GenericViewSet):
         login_id = serializer.validated_data["login"]
         password = serializer.validated_data["password"]
 
-        user = None
-        if "@" in login_id:
+        user = User.objects.filter(username=login_id).first()
+        if not user and "@" in login_id:
             user = User.objects.filter(email=login_id).first()
-        if not user:
-            user = User.objects.filter(username=login_id).first()
+
+        local_password_ok = bool(user and user.check_password(password))
+        if not local_password_ok:
+            user = authenticate_ldap_user(login_id, password)
 
         if not user:
-            return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
-
-        if not user.check_password(password):
             return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
 
         if not user.is_active:
@@ -185,6 +197,11 @@ class AuthViewSet(viewsets.GenericViewSet):
                 {"detail": "Invalid or expired reset token."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        try:
+            validate_password(password, user)
+        except DjangoValidationError as e:
+            return Response({"detail": list(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
 
         user.set_password(password)
         user.last_login = timezone.now()

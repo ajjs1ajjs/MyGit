@@ -54,11 +54,10 @@
       <div class="modal"><div class="card-header">Invite user <button @click="showInvite=false" class="text-[#a3a3a3] hover:text-[#737373] text-lg leading-none">&times;</button></div>
         <div class="card-body space-y-3">
           <div><label class="text-xs font-medium mb-1 block">Username</label><input v-model="invUsername" /></div>
-          <div><label class="text-xs font-medium mb-1 block">Email</label><input v-model="invEmail" type="email" /></div>
           <div><label class="text-xs font-medium mb-1 block">Password</label><input v-model="invPass" type="password" /></div>
           <div class="flex items-center gap-2"><input type="checkbox" v-model="invAdmin" class="w-auto" /><label class="text-xs">Admin</label></div>
           <p v-if="invErr" class="text-xs text-[#dc2626]">{{ invErr }}</p>
-          <div class="flex gap-2 pt-1"><button @click="invite" :disabled="!invUsername||!invEmail||!invPass" class="btn btn-accent">Create</button><button @click="showInvite=false" class="btn btn-ghost">Cancel</button></div>
+          <div class="flex gap-2 pt-1"><button @click="invite" :disabled="!invUsername||!invPass" class="btn btn-accent">Create</button><button @click="showInvite=false" class="btn btn-ghost">Cancel</button></div>
         </div>
       </div>
     </div>
@@ -68,7 +67,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, reactive } from "vue"; import { api } from "../api/client";
 const users = ref<any[]>([]); const search = ref(""); const showInvite = ref(false);
-const invUsername = ref(""); const invEmail = ref(""); const invPass = ref(""); const invAdmin = ref(false); const invErr = ref("");
+const invUsername = ref(""); const invPass = ref(""); const invAdmin = ref(false); const invErr = ref("");
 const editUser = ref<any>(null); const editErr = ref("");
 const editForm = reactive({ username: "", email: "", full_name: "", password: "", is_superuser: false, is_active: true });
 
@@ -87,7 +86,7 @@ function openEdit(u: any) {
   editForm.is_superuser = u.is_superuser;
   editForm.is_active = u.is_active;
 }
-function openInvite() { invUsername.value=''; invEmail.value=''; invPass.value=''; invAdmin.value=false; invErr.value=''; showInvite.value=true; }
+function openInvite() { invUsername.value=''; invPass.value=''; invAdmin.value=false; invErr.value=''; showInvite.value=true; }
 
 async function saveEdit() {
   try {
@@ -101,7 +100,7 @@ async function saveEdit() {
 
 async function toggleAdmin(u: any) { try { await api.patch(`/users/${u.username}/`,{is_superuser:!u.is_superuser}); u.is_superuser=!u.is_superuser; } catch {} }
 async function toggleActive(u: any) { try { await api.patch(`/users/${u.username}/`,{is_active:!u.is_active}); u.is_active=!u.is_active; } catch {} }
-async function invite() { try { await api.post("/auth/register/",{username:invUsername.value,email:invEmail.value,password:invPass.value}); showInvite.value=false; users.value=(await api.get("/users/"))||[]; }catch(e:any){invErr.value=e.message} }
+async function invite() { try { await api.post("/auth/register/",{username:invUsername.value,password:invPass.value}); showInvite.value=false; users.value=(await api.get("/users/"))||[]; }catch(e:any){invErr.value=e.message} }
 
 function fmt(d: string) { return d ? new Date(d).toLocaleDateString() : ''; }
 onMounted(async () => { try { users.value = (await api.get("/users/")) || []; } catch {} });

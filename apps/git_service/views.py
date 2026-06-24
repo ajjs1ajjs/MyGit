@@ -20,10 +20,10 @@ User = get_user_model()
 
 def _authenticate_user_with_password(login: str, password: str):
     try:
-        user = User.objects.get(email=login)
+        user = User.objects.get(username=login)
     except User.DoesNotExist:
         try:
-            user = User.objects.get(username=login)
+            user = User.objects.get(email=login)
         except User.DoesNotExist:
             return None
     if user.check_password(password):

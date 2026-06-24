@@ -11,9 +11,9 @@ PORT="${PORT:-8060}"
 DETECTED_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || ip -4 addr show scope global 2>/dev/null | grep -oP 'inet \K[\d.]+' | head -1 || echo "127.0.0.1")
 DETECTED_IP="${DETECTED_IP:-127.0.0.1}"
 DOMAIN="${DOMAIN:-$DETECTED_IP}"
-ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@users.mygit.local}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(openssl rand -hex 12 2>/dev/null || python3 -c "import secrets;print(secrets.token_hex(12))")}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-291263}"
 DB_PASSWORD="$(openssl rand -hex 24 2>/dev/null || python3 -c "import secrets;print(secrets.token_hex(24))")"
 REPO_URL="${REPO_URL:-https://github.com/ajjs1ajjs/MyGit.git}"
 
@@ -116,6 +116,7 @@ MYGIT_SITE_NAME=MyGit
 GIT_BINARY=git
 EMAIL_HOST=localhost
 EMAIL_PORT=25
+MYGIT_LDAP_ENABLED=False
 SECURE_SSL_REDIRECT=False
 SESSION_COOKIE_SECURE=False
 CSRF_COOKIE_SECURE=False
@@ -128,7 +129,7 @@ cd "${INSTALL_DIR}/backend"
 DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py migrate --noinput
 DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py collectstatic --noinput
 
-echo "from django.contrib.auth import get_user_model; User = get_user_model(); user, _ = User.objects.get_or_create(email='${ADMIN_EMAIL}', defaults={'username':'${ADMIN_USERNAME}'}); user.set_password('${ADMIN_PASSWORD}'); user.is_superuser=True; user.is_staff=True; user.must_change_password=True; user.save()" | DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py shell 2>/dev/null || true
+echo "from django.contrib.auth import get_user_model; User = get_user_model(); user, _ = User.objects.get_or_create(username='${ADMIN_USERNAME}', defaults={'email':'${ADMIN_EMAIL}'}); user.email='${ADMIN_EMAIL}'; user.set_password('${ADMIN_PASSWORD}'); user.is_superuser=True; user.is_staff=True; user.must_change_password=True; user.save()" | DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py shell 2>/dev/null || true
 
 VENV_BIN="${INSTALL_DIR}/venv/bin"
 
@@ -277,9 +278,9 @@ echo "  MyGit installed successfully!"
 echo "============================================"
 echo ""
 echo "  URL:      http://${DETECTED_IP}:${PORT}"
-echo "  Admin:    ${ADMIN_EMAIL}"
-echo "  Password: (set via ADMIN_PASSWORD env var)"
+echo "  Admin:    ${ADMIN_USERNAME}"
+echo "  Password: ${ADMIN_PASSWORD}"
+echo "  IMPORTANT: change this password immediately after first login."
 echo ""
 echo "  Logs:     journalctl -u mygit-api -f"
 echo "  Backup:   ${INSTALL_DIR}/backend/scripts/mygit-backup /backup"
-

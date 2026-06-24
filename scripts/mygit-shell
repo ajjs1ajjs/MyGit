@@ -11,10 +11,12 @@ SSH_ORIGINAL_COMMAND will contain e.g. "git-upload-pack 'owner/repo.git'"
 import os
 import re
 import sys
+import urllib.parse
 import urllib.request
 
 API_URL = os.environ.get("MYGIT_API_URL", "http://127.0.0.1:8000")
 REPOS_ROOT = os.environ.get("MYGIT_REPOS_ROOT", "/opt/mygit/repos")
+API_TOKEN = os.environ.get("MYGIT_INTERNAL_API_TOKEN") or os.environ.get("MYGIT_API_TOKEN", "")
 
 
 def main():
@@ -63,8 +65,16 @@ def main():
 
 def check_access(key_id: str, repo_path: str, action: str) -> bool:
     url = f"{API_URL}/api/v1/internal/check_access"
-    data = f"key_id={key_id}&repo_path={repo_path}&action={action}"
-    req = urllib.request.Request(url, data=data.encode())
+    data = urllib.parse.urlencode(
+        {"key_id": key_id, "repo_path": repo_path, "action": action}
+    ).encode()
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    if API_TOKEN:
+        req.add_header("Authorization", f"Bearer {API_TOKEN}")
 
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:

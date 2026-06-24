@@ -6,6 +6,7 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.api.mixins import ensure_repo_access
 from apps.git_service.backend import GitBackend, GitServiceError
 from apps.repositories.models import Repository, RepositoryAccess
 
@@ -77,6 +78,12 @@ class MergeRequestViewSet(viewsets.GenericViewSet):
 
     def create(self, request, project_id=None):
         repo = self._get_repo()
+        ensure_repo_access(
+            repo,
+            request.user,
+            min_role=RepositoryAccess.Role.DEVELOPER,
+            allow_public_read=False,
+        )
         serializer = MergeRequestCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         mr = serializer.save(repository=repo, author=request.user)
@@ -97,6 +104,12 @@ class MergeRequestViewSet(viewsets.GenericViewSet):
     def merge(self, request, project_id=None, number=None):
         mr = get_object_or_404(self.get_queryset(), number=number)
         repo = self._get_repo()
+        ensure_repo_access(
+            repo,
+            request.user,
+            min_role=RepositoryAccess.Role.DEVELOPER,
+            allow_public_read=False,
+        )
 
         if mr.state not in (MergeRequest.State.OPEN, MergeRequest.State.DRAFT):
             return Response(

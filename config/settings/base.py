@@ -23,6 +23,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "rest_framework",
     "rest_framework_simplejwt",
+    "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
     "apps.core",
     "apps.accounts",
@@ -82,6 +83,9 @@ DATABASES = {
 }
 
 AUTH_USER_MODEL = "accounts.User"
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
+]
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -170,6 +174,18 @@ SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
 
 MYGIT_SITE_NAME = env("MYGIT_SITE_NAME", default="MyGit")
 MYGIT_REPOS_ROOT = env("MYGIT_REPOS_ROOT", default=str(BASE_DIR / "repos"))
+MYGIT_INTERNAL_API_TOKEN = env("MYGIT_INTERNAL_API_TOKEN", default="")
+
+MYGIT_LDAP_ENABLED = env.bool("MYGIT_LDAP_ENABLED", default=False)
+MYGIT_LDAP_SERVER_URI = env("MYGIT_LDAP_SERVER_URI", default="")
+MYGIT_LDAP_BIND_DN = env("MYGIT_LDAP_BIND_DN", default="")
+MYGIT_LDAP_BIND_PASSWORD = env("MYGIT_LDAP_BIND_PASSWORD", default="")
+MYGIT_LDAP_USER_SEARCH_BASE = env("MYGIT_LDAP_USER_SEARCH_BASE", default="")
+MYGIT_LDAP_USER_SEARCH_FILTER = env("MYGIT_LDAP_USER_SEARCH_FILTER", default="(uid={username})")
+MYGIT_LDAP_START_TLS = env.bool("MYGIT_LDAP_START_TLS", default=False)
+MYGIT_LDAP_USERNAME_ATTR = env("MYGIT_LDAP_USERNAME_ATTR", default="uid")
+MYGIT_LDAP_EMAIL_ATTR = env("MYGIT_LDAP_EMAIL_ATTR", default="mail")
+MYGIT_LDAP_FULL_NAME_ATTR = env("MYGIT_LDAP_FULL_NAME_ATTR", default="cn")
 
 GIT_BINARY = env("GIT_BINARY", default="git")
 

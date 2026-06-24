@@ -4,7 +4,8 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from apps.repositories.models import Repository
+from apps.api.mixins import ensure_repo_access
+from apps.repositories.models import Repository, RepositoryAccess
 
 from .models import Webhook, WebhookDelivery
 from .serializers import WebhookDeliverySerializer, WebhookSerializer
@@ -21,7 +22,13 @@ class WebhookViewSet(viewsets.ModelViewSet):
 
     def _get_repo(self):
         repo_id = self.kwargs.get("project_id", "")
-        return get_object_or_404(Repository, id=repo_id)
+        repo = get_object_or_404(Repository, id=repo_id)
+        return ensure_repo_access(
+            repo,
+            self.request.user,
+            min_role=RepositoryAccess.Role.MAINTAINER,
+            allow_public_read=False,
+        )
 
     def perform_create(self, serializer):
         serializer.save(repository=self._get_repo())

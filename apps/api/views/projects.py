@@ -6,8 +6,13 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.api.mixins import ensure_repo_access
 from apps.git_service.backend import GitBackend, GitServiceError
-from apps.repositories.models import Repository, RepositoryAccess
+from apps.repositories.models import (
+    Repository,
+    RepositoryAccess,
+    validate_repository_component,
+)
 
 
 class RepositorySerializer(serializers.ModelSerializer):
@@ -54,6 +59,12 @@ class RepositorySerializer(serializers.ModelSerializer):
 
         return repo
 
+    def validate_name(self, value):
+        try:
+            return validate_repository_component(value)
+        except Exception as e:
+            raise serializers.ValidationError(str(e)) from e
+
 
 class ProjectViewSet(viewsets.ModelViewSet):
     serializer_class = RepositorySerializer
@@ -72,10 +83,21 @@ class ProjectViewSet(viewsets.ModelViewSet):
             .order_by("-updated_at")
         )
 
+    def _ensure_repo_role(self, repo: Repository, role: int) -> None:
+        ensure_repo_access(repo, self.request.user, min_role=role, allow_public_read=False)
+
+    def perform_update(self, serializer):
+        self._ensure_repo_role(self.get_object(), RepositoryAccess.Role.MAINTAINER)
+        serializer.save()
+
     @action(methods=["post"], detail=True)
     def fork(self, request, id=None):
         repo = self.get_object()
         new_name = request.data.get("name", f"{repo.name}-fork")
+        try:
+            validate_repository_component(new_name)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         new_path = f"{request.user.username}/{new_name}"
 
         if Repository.objects.filter(path=new_path).exists():
@@ -190,18 +212,22 @@ class ProjectViewSet(viewsets.ModelViewSet):
     @action(methods=["get", "post", "delete"], detail=True, url_path="branches")
     def branches(self, request, id=None):
         repo = self.get_object()
-        backend = self._get_backend(repo)
 
         if request.method == "GET":
-            branches = backend.get_branches()
-            return Response({"branches": branches})
+            try:
+                branches = self._get_backend(repo).get_branches()
+                return Response({"branches": branches})
+            except GitServiceError as e:
+                return Response({"detail": str(e)}, status=404)
 
         if request.method == "POST":
+            self._ensure_repo_role(repo, RepositoryAccess.Role.DEVELOPER)
             name = request.data.get("name", "")
             ref = request.data.get("ref", repo.default_branch)
             if not name:
                 return Response({"detail": "Branch name is required."}, status=400)
             try:
+                backend = self._get_backend(repo)
                 result = backend.create_branch(name, ref)
                 return Response(result, status=status.HTTP_201_CREATED)
             except Exception as e:
@@ -212,6 +238,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
     @action(methods=["delete"], detail=True, url_path="branches/(?P<name>[^/]+)")
     def delete_branch(self, request, id=None, name=None):
         repo = self.get_object()
+        self._ensure_repo_role(repo, RepositoryAccess.Role.DEVELOPER)
         try:
             backend = self._get_backend(repo)
             backend.delete_branch(name)
@@ -224,19 +251,23 @@ class ProjectViewSet(viewsets.ModelViewSet):
     @action(methods=["get", "post", "delete"], detail=True, url_path="tags")
     def tags(self, request, id=None):
         repo = self.get_object()
-        backend = self._get_backend(repo)
 
         if request.method == "GET":
-            tag_list = backend.get_tags()
-            return Response({"tags": tag_list})
+            try:
+                tag_list = self._get_backend(repo).get_tags()
+                return Response({"tags": tag_list})
+            except GitServiceError as e:
+                return Response({"detail": str(e)}, status=404)
 
         if request.method == "POST":
+            self._ensure_repo_role(repo, RepositoryAccess.Role.DEVELOPER)
             name = request.data.get("name", "")
             ref = request.data.get("ref", repo.default_branch)
             msg = request.data.get("message", "")
             if not name:
                 return Response({"detail": "Tag name is required."}, status=400)
             try:
+                backend = self._get_backend(repo)
                 result = backend.create_tag(name, ref, message=msg)
                 return Response(result, status=status.HTTP_201_CREATED)
             except Exception as e:
@@ -247,6 +278,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
     @action(methods=["delete"], detail=True, url_path="tags/(?P<name>[^/]+)")
     def delete_tag(self, request, id=None, name=None):
         repo = self.get_object()
+        self._ensure_repo_role(repo, RepositoryAccess.Role.DEVELOPER)
         try:
             backend = self._get_backend(repo)
             backend.delete_tag(name)
@@ -278,10 +310,11 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(methods=["get"], detail=False, url_path="by-path/(?P<repo_path>[^/]+/[^/]+)")
     def by_path(self, request, repo_path=None):
-        repo = get_object_or_404(Repository, path=repo_path)
+        repo = get_object_or_404(self.get_queryset(), path=repo_path)
         return Response(RepositorySerializer(repo).data)
 
     def perform_destroy(self, instance):
+        self._ensure_repo_role(instance, RepositoryAccess.Role.OWNER)
         backend = GitBackend(instance.disk_path)
         if backend.exists():
             backend.delete()

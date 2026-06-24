@@ -44,7 +44,7 @@ class WebhookSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["id", "repository", "created_at", "updated_at"]
 
     def validate_url(self, value):
         if not validate_webhook_url(value):

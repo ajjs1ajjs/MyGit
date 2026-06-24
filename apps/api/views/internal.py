@@ -4,6 +4,7 @@ from functools import wraps
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.http import JsonResponse
+from django.utils.crypto import constant_time_compare
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
@@ -20,8 +21,10 @@ def require_internal_token(view_func):
         token = request.META.get("HTTP_AUTHORIZATION", "")
         expected = getattr(settings, "MYGIT_INTERNAL_API_TOKEN", "")
         if not expected:
+            if not settings.DEBUG:
+                return JsonResponse({"detail": "Internal API token is not configured."}, status=503)
             return view_func(request, *args, **kwargs)
-        if token != f"Bearer {expected}":
+        if not constant_time_compare(token, f"Bearer {expected}"):
             return JsonResponse({"detail": "Forbidden."}, status=403)
         return view_func(request, *args, **kwargs)
 
@@ -56,6 +59,9 @@ def check_access(request):
     repo_path = data.get("repo_path", "")
     action = data.get("action", "")
 
+    if action not in {"pull", "push"}:
+        return JsonResponse({"detail": "Invalid action."}, status=400)
+
     try:
         key = SSHKey.objects.get(id=key_id)
     except (SSHKey.DoesNotExist, ValueError):
@@ -78,6 +84,12 @@ def check_access(request):
     access = RepositoryAccess.objects.filter(repository=repo, user=key.user).first()
 
     if not access:
+        return JsonResponse({"detail": "Access denied."}, status=403)
+
+    required_role = (
+        RepositoryAccess.Role.DEVELOPER if action == "push" else RepositoryAccess.Role.GUEST
+    )
+    if access.role < required_role:
         return JsonResponse({"detail": "Access denied."}, status=403)
 
     return JsonResponse({"detail": "Access granted."})

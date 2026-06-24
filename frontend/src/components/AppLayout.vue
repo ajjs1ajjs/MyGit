@@ -37,7 +37,7 @@
       </nav>
       <div class="footer">
         <template v-if="auth.user">
-          <div class="text-xs text-[#737373]">{{ auth.user.email }}</div>
+          <div class="text-xs text-[#737373]">{{ auth.user.username }}</div>
           <button @click="auth.logout()" class="text-xs text-[#525252] hover:text-[#a3a3a3] mt-0.5 transition-colors">Sign out</button>
         </template>
         <template v-else>

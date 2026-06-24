@@ -16,6 +16,7 @@ markdown>=3.7,<4.0
 Pygments>=2.18,<3.0
 PyYAML>=6.0,<7.0
 requests>=2.32,<3.0
+ldap3>=2.9,<3.0
 drf-spectacular>=0.28,<0.29
 django-prometheus>=2.3,<3.0
 sentry-sdk>=2.20,<3.0

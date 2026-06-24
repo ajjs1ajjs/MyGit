@@ -4,6 +4,7 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.api.mixins import ensure_repo_access
 from apps.repositories.models import Repository, RepositoryAccess
 
 from .models import WikiPage
@@ -49,6 +50,12 @@ class WikiPageViewSet(viewsets.GenericViewSet):
 
     def create(self, request, project_id=None):
         repo = self._get_repo()
+        ensure_repo_access(
+            repo,
+            request.user,
+            min_role=RepositoryAccess.Role.DEVELOPER,
+            allow_public_read=False,
+        )
         serializer = WikiPageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         page = serializer.save(repository=repo, author=request.user)
@@ -56,6 +63,12 @@ class WikiPageViewSet(viewsets.GenericViewSet):
 
     def update(self, request, project_id=None, slug=None):
         page = get_object_or_404(self.get_queryset(), slug=slug)
+        ensure_repo_access(
+            page.repository,
+            request.user,
+            min_role=RepositoryAccess.Role.DEVELOPER,
+            allow_public_read=False,
+        )
         serializer = WikiPageSerializer(page, data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save()
@@ -63,5 +76,11 @@ class WikiPageViewSet(viewsets.GenericViewSet):
 
     def destroy(self, request, project_id=None, slug=None):
         page = get_object_or_404(self.get_queryset(), slug=slug)
+        ensure_repo_access(
+            page.repository,
+            request.user,
+            min_role=RepositoryAccess.Role.DEVELOPER,
+            allow_public_read=False,
+        )
         page.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)

@@ -21,8 +21,8 @@ class TestUserModel:
 
     def test_create_superuser(self):
         admin = User.objects.create_superuser(
-            email="admin@example.com",
-            username="admin",
+            email="root@example.com",
+            username="root",
             password="adminpass123",
         )
         assert admin.is_superuser is True

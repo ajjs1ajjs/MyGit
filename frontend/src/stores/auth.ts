@@ -3,7 +3,7 @@ import { ref } from "vue";
 import { api } from "../api/client";
 
 interface User {
-  id: string; username: string; email: string;
+  id: string; username: string; email?: string;
   full_name?: string; bio?: string; avatar?: string;
   must_change_password?: boolean; is_superuser?: boolean;
 }
@@ -21,8 +21,8 @@ export const useAuthStore = defineStore("auth", () => {
     return data.user;
   }
 
-  async function register(username: string, email: string, password: string) {
-    const data = await api.post("/auth/register/", { username, email, password });
+  async function register(username: string, password: string) {
+    const data = await api.post("/auth/register/", { username, password });
     token.value = data.access;
     localStorage.setItem("access_token", data.access);
     localStorage.setItem("refresh_token", data.refresh);

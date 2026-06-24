@@ -1,4 +1,6 @@
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.shortcuts import get_object_or_404
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
@@ -71,10 +73,16 @@ class UserViewSet(viewsets.GenericViewSet):
             data.pop("is_superuser", None)
             data.pop("is_active", None)
         password = data.pop("password", None)
+        if isinstance(password, list):
+            password = password[0] if password else None
         serializer = UserSerializer(user, data=data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         if password:
+            try:
+                validate_password(password, user)
+            except DjangoValidationError as e:
+                return Response({"detail": list(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
             user.set_password(password)
             user.save(update_fields=["password"])
         return Response(serializer.data)
@@ -91,7 +99,10 @@ class UserViewSet(viewsets.GenericViewSet):
             data = UserSerializer(request.user).data
             data["must_change_password"] = request.user.must_change_password
             return Response(data)
-        serializer = UserSerializer(request.user, data=request.data, partial=True)
+        data = request.data.copy()
+        for field in ("is_superuser", "is_staff", "is_active", "must_change_password", "password"):
+            data.pop(field, None)
+        serializer = UserSerializer(request.user, data=data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
@@ -110,6 +121,10 @@ class UserViewSet(viewsets.GenericViewSet):
                 {"detail": "Password must be at least 8 characters."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        try:
+            validate_password(new_password, request.user)
+        except DjangoValidationError as e:
+            return Response({"detail": list(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
         request.user.set_password(new_password)
         request.user.must_change_password = False
         request.user.save(update_fields=["password", "must_change_password"])

@@ -1,7 +1,36 @@
+import re
+
 from django.conf import settings
+from django.core.exceptions import SuspiciousFileOperation, ValidationError
 from django.db import models
 
 from apps.core.models import BaseModel
+
+REPOSITORY_COMPONENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
+
+
+def validate_repository_component(value: str) -> str:
+    value = (value or "").strip()
+    if (
+        not REPOSITORY_COMPONENT_RE.fullmatch(value)
+        or value in {".", ".."}
+        or value.endswith(".git")
+    ):
+        raise ValidationError(
+            "Use only letters, numbers, dots, underscores and hyphens; "
+            "the name must not end with .git."
+        )
+    return value
+
+
+def validate_repository_path(value: str) -> str:
+    value = (value or "").strip()
+    parts = value.split("/")
+    if len(parts) != 2:
+        raise ValidationError("Repository path must be in owner/name format.")
+    for part in parts:
+        validate_repository_component(part)
+    return value
 
 
 class Repository(BaseModel):
@@ -33,6 +62,11 @@ class Repository(BaseModel):
     def __str__(self):
         return self.path
 
+    def clean(self):
+        super().clean()
+        validate_repository_component(self.name)
+        validate_repository_path(self.path)
+
     @property
     def disk_path(self):
         repo_root = getattr(settings, "MYGIT_REPOS_ROOT", None)
@@ -42,7 +76,11 @@ class Repository(BaseModel):
             repo_root = os.path.join(settings.BASE_DIR, "repos")
         from pathlib import Path
 
-        return Path(repo_root) / f"{self.path}.git"
+        root = Path(repo_root).resolve(strict=False)
+        candidate = (root / f"{self.path}.git").resolve(strict=False)
+        if candidate == root or not candidate.is_relative_to(root):
+            raise SuspiciousFileOperation("Repository path escapes the configured repository root.")
+        return candidate
 
 
 class RepositoryAccess(BaseModel):
