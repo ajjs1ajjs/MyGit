@@ -8,7 +8,7 @@ curl -sSL https://raw.githubusercontent.com/ajjs1ajjs/MyGit/master/setup.sh | su
 ```
 
 Після встановлення відкрийте `http://ВАШ_IP:8060`  
-Логін: `admin@example.com` / `291263` (потрібно змінити при першому вході)
+Логін: `admin@example.com` / пароль генерується автоматично (або встановіть через `ADMIN_PASSWORD`)
 
 ---
 
