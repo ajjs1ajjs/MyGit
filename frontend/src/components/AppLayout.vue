@@ -15,13 +15,25 @@
           <svg class="w-4 h-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
           Groups
         </RouterLink>
+        <RouterLink to="/search" class="nav-item" active-class="active">
+          <svg class="w-4 h-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          Search
+        </RouterLink>
+        <RouterLink v-if="auth.user?.is_superuser" to="/admin/users" class="nav-item" active-class="active">
+          <svg class="w-4 h-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+          Users
+        </RouterLink>
+        <div class="section">Projects</div>
         <template v-if="repos.length">
-          <div class="section">Projects</div>
           <RouterLink v-for="r in repos" :key="r.id" :to="`/${r.path}`" class="nav-item truncate" active-class="active">
             <svg class="w-4 h-4 opacity-60 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
             {{ r.name }}
           </RouterLink>
         </template>
+        <RouterLink v-else-if="auth.user" to="/" class="nav-item text-[#525252]">
+          <svg class="w-4 h-4 opacity-40 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New project...
+        </RouterLink>
       </nav>
       <div class="footer">
         <template v-if="auth.user">
@@ -36,7 +48,8 @@
     </aside>
     <div class="flex-1 flex flex-col overflow-hidden">
       <header class="topbar">
-        <form @submit.prevent="search" class="flex-1"><input v-model="q" placeholder="Search projects, issues, merge requests..." /></form>
+        <form @submit.prevent="search" class="flex-1"><input v-model="q" placeholder="Search..." /></form>
+        <a v-if="!auth.user" href="/admin/" target="_blank" class="btn btn-ghost btn-sm">Admin panel</a>
         <button v-if="auth.user" @click="showNew=true" class="btn btn-accent btn-sm">+ New project</button>
       </header>
       <main class="flex-1 overflow-y-auto p-6">
@@ -47,14 +60,9 @@
       <div class="modal">
         <div class="card-header">Create new project <button @click="showNew=false" class="text-[#a3a3a3] hover:text-[#737373] text-lg leading-none">&times;</button></div>
         <div class="card-body space-y-3">
-          <div><label class="text-xs font-medium mb-1 block">Project name</label><input v-model="newName" placeholder="my-awesome-project" @keyup.enter="create" /></div>
-          <div><label class="text-xs font-medium mb-1 block">Visibility</label>
-            <div class="flex gap-2">
-              <button @click="newVis='private'" :class="newVis==='private'?'btn-accent':'btn-ghost'" class="btn btn-sm flex-1">Private</button>
-              <button @click="newVis='public'" :class="newVis==='public'?'btn-accent':'btn-ghost'" class="btn btn-sm flex-1">Public</button>
-            </div>
-          </div>
-          <div class="flex gap-2 pt-1"><button @click="create" :disabled="!newName" class="btn btn-accent">Create project</button><button @click="showNew=false" class="btn btn-ghost">Cancel</button></div>
+          <div><label class="text-xs font-medium mb-1 block">Project name</label><input v-model="newName" @keyup.enter="create" /></div>
+          <div class="flex gap-2"><button @click="newVis='private'" :class="newVis==='private'?'btn-accent':'btn-ghost'" class="btn btn-sm flex-1">Private</button><button @click="newVis='public'" :class="newVis==='public'?'btn-accent':'btn-ghost'" class="btn btn-sm flex-1">Public</button></div>
+          <div class="flex gap-2 pt-1"><button @click="create" :disabled="!newName" class="btn btn-accent">Create</button><button @click="showNew=false" class="btn btn-ghost">Cancel</button></div>
         </div>
       </div>
     </div>

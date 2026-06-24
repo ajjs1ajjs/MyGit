@@ -41,7 +41,7 @@ class RegisterSerializer(serializers.Serializer):
 
 
 class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+    login = serializers.CharField(max_length=255)
     password = serializers.CharField(write_only=True)
 
 
@@ -67,12 +67,22 @@ class AuthViewSet(viewsets.GenericViewSet):
     def login(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        email = serializer.validated_data["email"]
+        login_id = serializer.validated_data["login"]
         password = serializer.validated_data["password"]
 
-        try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
+        user = None
+        if "@" in login_id:
+            try:
+                user = User.objects.get(email=login_id)
+            except User.DoesNotExist:
+                pass
+        if not user:
+            try:
+                user = User.objects.get(username=login_id)
+            except User.DoesNotExist:
+                pass
+
+        if not user:
             return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
 
         if not user.check_password(password):

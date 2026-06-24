@@ -33,6 +33,7 @@ const routes = [
   { path: "/groups", name: "groups", component: () => import("../views/GroupsListPage.vue") },
   { path: "/groups/:id", name: "group-detail", component: () => import("../views/GroupDetailPage.vue") },
   { path: "/search", name: "search", component: () => import("../views/SearchPage.vue") },
+  { path: "/admin/users", name: "admin-users", component: () => import("../views/AdminUsersPage.vue") },
 ];
 
 const router = createRouter({ history: createWebHistory(), routes });
