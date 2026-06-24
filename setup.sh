@@ -227,8 +227,8 @@ server {
         proxy_set_header Host \$host;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
-    location /admin/ {
-        proxy_pass http://127.0.0.1:8000;
+    location /django-admin/ {
+        proxy_pass http://127.0.0.1:8000/django-admin/;
         proxy_set_header Host \$host;
     }
     location ~ ^/(.+/.+)\\.git/ {

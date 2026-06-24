@@ -11,6 +11,6 @@ urlpatterns = [
     ),
     path("api/v1/", include("apps.api.urls")),
     path("", include("apps.git_service.urls")),
-    path("admin/", admin.site.urls),
+    path("django-admin/", admin.site.urls),
     path("", include("django_prometheus.urls")),
 ]

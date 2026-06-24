@@ -49,7 +49,7 @@
     <div class="flex-1 flex flex-col overflow-hidden">
       <header class="topbar">
         <form @submit.prevent="search" class="flex-1"><input v-model="q" placeholder="Search..." /></form>
-        <a v-if="!auth.user" href="/admin/" target="_blank" class="btn btn-ghost btn-sm">Admin panel</a>
+        <a v-if="!auth.user" href="/django-admin/" target="_blank" class="btn btn-ghost btn-sm">Admin panel</a>
         <button v-if="auth.user" @click="showNew=true" class="btn btn-accent btn-sm">+ New project</button>
       </header>
       <main class="flex-1 overflow-y-auto p-6">
