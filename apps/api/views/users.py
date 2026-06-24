@@ -59,6 +59,19 @@ class UserViewSet(viewsets.GenericViewSet):
         user = get_object_or_404(User, username=username)
         return Response(UserSerializer(user).data)
 
+    def partial_update(self, request, username=None):
+        user = get_object_or_404(User, username=username)
+        if not request.user.is_superuser and user != request.user:
+            return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
+        data = request.data.copy()
+        if not request.user.is_superuser:
+            data.pop("is_superuser", None)
+            data.pop("is_active", None)
+        serializer = UserSerializer(user, data=data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
     def list(self, request):
         page = self.paginate_queryset(self.get_queryset())
         if page is not None:
