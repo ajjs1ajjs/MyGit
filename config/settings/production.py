@@ -8,6 +8,9 @@ SECRET_KEY = env("DJANGO_SECRET_KEY")
 
 STATIC_ROOT = "/opt/mygit/static"
 
+SECURE_CROSS_ORIGIN_OPENER_POLICY = None
+CSRF_TRUSTED_ORIGINS = ["http://*", "https://*"]
+
 DATABASES = {
     "default": env.db("DATABASE_URL"),
 }
