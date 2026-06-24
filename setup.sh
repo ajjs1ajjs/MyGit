@@ -151,7 +151,8 @@ fi
 cd "${INSTALL_DIR}/backend/frontend"
 npm install --silent 2>/dev/null || npm install
 npm run build 2>/dev/null || npx vite build
-cp -r dist/* "${INSTALL_DIR}/static/" 2>/dev/null || mkdir -p "${INSTALL_DIR}/static" && cp -r dist/* "${INSTALL_DIR}/static/"
+mkdir -p "${INSTALL_DIR}/static/frontend"
+cp -r dist/* "${INSTALL_DIR}/static/frontend/"
 cd "${INSTALL_DIR}/backend"
 DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py collectstatic --noinput -v0
 
@@ -217,7 +218,7 @@ server {
     server_name ${DOMAIN} ${DETECTED_IP} localhost;
 
     location / {
-        root ${INSTALL_DIR}/static;
+        root ${INSTALL_DIR}/static/frontend;
         try_files \$uri /index.html;
     }
     location /api/ {

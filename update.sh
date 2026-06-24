@@ -6,7 +6,7 @@ sudo git pull
 echo ">>> Migrating..."
 sudo DJANGO_SETTINGS_MODULE=config.settings.production ../venv/bin/python manage.py migrate --noinput
 echo ">>> Building frontend..."
-cd frontend && npm run build && sudo rm -rf /opt/mygit/static/assets /opt/mygit/static/index.html && sudo cp -r dist/* /opt/mygit/static/
+cd frontend && npm run build && sudo rm -rf /opt/mygit/static/frontend && sudo mkdir -p /opt/mygit/static/frontend && sudo cp -r dist/* /opt/mygit/static/frontend/
 echo ">>> Collecting static..."
 cd /opt/mygit/backend && sudo DJANGO_SETTINGS_MODULE=config.settings.production ../venv/bin/python manage.py collectstatic --noinput -v0
 echo ">>> Restarting..."
