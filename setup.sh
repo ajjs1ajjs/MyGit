@@ -122,6 +122,7 @@ EMAIL_PORT=25
 SECURE_SSL_REDIRECT=False
 SESSION_COOKIE_SECURE=False
 CSRF_COOKIE_SECURE=False
+CSRF_TRUSTED_ORIGINS=http://${DETECTED_IP}:${PORT},http://localhost:${PORT}
 EOF
 
 mkdir -p "${INSTALL_DIR}/repos" "${INSTALL_DIR}/backend/logs" "${INSTALL_DIR}/static" "${INSTALL_DIR}/media"
