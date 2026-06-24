@@ -18,7 +18,7 @@
       <RouterLink :to="`/${repo.path}/-/branches`" class="nav-tab" :class="{ active: isTab('branches') }">Branches<span class="count">{{ branches.length }}</span></RouterLink>
       <RouterLink :to="`/${repo.path}/-/tags`" class="nav-tab" :class="{ active: isTab('tags') }">Tags<span class="count">{{ tags.length }}</span></RouterLink>
       <RouterLink :to="`/${repo.path}/-/issues`" class="nav-tab" :class="{ active: isTab('issues') || isTab('issue') }">Issues</RouterLink>
-      <RouterLink :to="`/${repo.path}/-/merge_requests`" class="nav-tab" :class="{ active: isTab('merge') || isTab('mr') }">Merge requests</RouterLink>
+      <RouterLink :to="`/${repo.path}/-/merge_requests`" class="nav-tab" :class="{ active: isTab('merge_requests') || isTab('merge_request') }">Merge requests</RouterLink>
       <RouterLink :to="`/${repo.path}/-/wiki`" class="nav-tab" :class="{ active: isTab('wiki') }">Wiki</RouterLink>
       <RouterLink :to="`/${repo.path}/-/settings`" class="nav-tab" :class="{ active: isTab('settings') }">Settings</RouterLink>
     </div>
