@@ -22,15 +22,13 @@ def global_search(request):
     results = {}
     user = request.user
 
-    repos = (
-        Repository.objects.filter(
-            Q(path__icontains=q) | Q(name__icontains=q) | Q(description__icontains=q),
-        )
-        .filter(
-            Q(visibility="public") | Q(owner_id=user.id) | Q(access_list__user=user),
-        )
-        .distinct()[:10]
-    )
+    accessible_repos = Repository.objects.filter(
+        Q(visibility="public") | Q(owner_id=user.id) | Q(access_list__user=user),
+    ).distinct()
+
+    repos = accessible_repos.filter(
+        Q(path__icontains=q) | Q(name__icontains=q) | Q(description__icontains=q),
+    )[:10]
     if repos:
         results["repositories"] = [
             {"id": str(r.id), "path": r.path, "type": "repository"} for r in repos
@@ -39,9 +37,7 @@ def global_search(request):
     issues = (
         Issue.objects.filter(
             Q(title__icontains=q) | Q(description__icontains=q),
-            repository__in=Repository.objects.filter(
-                Q(visibility="public") | Q(owner_id=user.id) | Q(access_list__user=user),
-            ),
+            repository__in=accessible_repos,
         )
         .select_related("repository")
         .distinct()[:10]
@@ -62,9 +58,7 @@ def global_search(request):
     mrs = (
         MergeRequest.objects.filter(
             Q(title__icontains=q) | Q(description__icontains=q),
-            repository__in=Repository.objects.filter(
-                Q(visibility="public") | Q(owner_id=user.id) | Q(access_list__user=user),
-            ),
+            repository__in=accessible_repos,
         )
         .select_related("repository")
         .distinct()[:10]
@@ -85,9 +79,7 @@ def global_search(request):
     wiki = (
         WikiPage.objects.filter(
             Q(title__icontains=q) | Q(content__icontains=q),
-            repository__in=Repository.objects.filter(
-                Q(visibility="public") | Q(owner_id=user.id) | Q(access_list__user=user),
-            ),
+            repository__in=accessible_repos,
         )
         .select_related("repository")
         .distinct()[:10]

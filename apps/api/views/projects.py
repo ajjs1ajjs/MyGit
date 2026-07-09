@@ -325,9 +325,9 @@ class ProjectViewSet(viewsets.ModelViewSet):
         fmt = request.query_params.get("format", "tar.gz")
         try:
             backend = self._get_backend(repo)
-            data = backend.get_archive(ref, fmt)
+            stream = backend.get_archive_stream(ref, fmt)
             content_type = "application/gzip" if fmt == "tar.gz" else f"application/{fmt}"
-            response = HttpResponse(data, content_type=content_type)
+            response = HttpResponse(stream, content_type=content_type)
             import re
 
             safe_name = re.sub(r"[^\w\-.]", "_", repo.name)

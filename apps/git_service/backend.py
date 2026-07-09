@@ -349,15 +349,26 @@ class GitBackend:
         ).stdout.strip()
         return {"sha": sha, "method": "merge-commit"}
 
-    def get_archive(self, ref: str = "HEAD", fmt: str = "tar.gz") -> bytes:
+    def get_archive_stream(self, ref: str = "HEAD", fmt: str = "tar.gz"):
         import subprocess as sp
 
-        fmt_flag = "--format=tar.gz" if fmt == "tar.gz" else f"--format={fmt}"
-        cmd = [GIT_BINARY, "archive", fmt_flag, "--output=-", ref]
-        proc = sp.run(cmd, capture_output=True, cwd=str(self.repo_path))
-        if proc.returncode != 0:
-            raise GitServiceError(proc.stderr.decode(errors="replace"))
-        return proc.stdout
+        if fmt not in ("tar.gz", "zip", "tar"):
+            raise GitServiceError(f"Unsupported format: {fmt}")
+        cmd = [GIT_BINARY, "archive", f"--format={fmt}", "--output=-", ref]
+
+        def generate():
+            proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, cwd=str(self.repo_path))
+            while True:
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+            proc.stdout.close()
+            proc.wait()
+            if proc.returncode != 0:
+                raise GitServiceError(proc.stderr.read().decode(errors="replace"))
+
+        return generate()
 
     @staticmethod
     def get_repo_size_kb(repo_path: Path) -> int:

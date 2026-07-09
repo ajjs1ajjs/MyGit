@@ -1,7 +1,9 @@
 import base64
 import logging
+import time
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.http import (
     HttpResponse,
     HttpResponseBadRequest,
@@ -16,6 +18,19 @@ from apps.repositories.models import Repository, RepositoryAccess
 
 logger = logging.getLogger("mygit")
 User = get_user_model()
+
+
+def _rate_limit(request, key_prefix: str, max_requests: int = 30, window: int = 60) -> bool:
+    ip = request.META.get("REMOTE_ADDR", "unknown")
+    cache_key = f"git_rate:{key_prefix}:{ip}"
+    now = time.time()
+    hits = cache.get(cache_key, [])
+    hits = [t for t in hits if t > now - window]
+    if len(hits) >= max_requests:
+        return False
+    hits.append(now)
+    cache.set(cache_key, hits, window)
+    return True
 
 
 def _authenticate_user_with_password(login: str, password: str):
@@ -105,6 +120,9 @@ def _check_repo_access(repo: Repository, user, service: str) -> bool:
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
 def git_info_refs(request, owner: str, repo_name: str):
+    if not _rate_limit(request, "info_refs", max_requests=60):
+        return HttpResponse("Rate limit exceeded.", status=429)
+
     repo = get_object_or_404(Repository, path=f"{owner}/{repo_name}", is_archived=False)
     service = request.GET.get("service", "")
 
@@ -141,6 +159,9 @@ def git_info_refs(request, owner: str, repo_name: str):
 @csrf_exempt
 @require_http_methods(["POST"])
 def git_rpc(request, owner: str, repo_name: str):
+    if not _rate_limit(request, "rpc", max_requests=120):
+        return HttpResponse("Rate limit exceeded.", status=429)
+
     path_info = request.path
     service = None
 

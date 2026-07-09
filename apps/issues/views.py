@@ -2,10 +2,10 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.api.mixins import ensure_repo_access
 from apps.repositories.models import Repository, RepositoryAccess
 
 from .models import Issue, IssueComment, Label, Milestone
@@ -49,16 +49,7 @@ class IssueViewSet(viewsets.GenericViewSet):
         return repo
 
     def _ensure_repo_access(self, repo):
-        user = self.request.user
-        is_public = repo.visibility == Repository.Visibility.PUBLIC
-        is_owner = str(repo.owner_id) == str(user.id)
-        has_access = RepositoryAccess.objects.filter(
-            repository=repo, user=user, role__gte=RepositoryAccess.Role.GUEST
-        ).exists()
-        if not is_public and not is_owner and not has_access:
-            raise PermissionDenied(
-                "You do not have access to this repository."
-            )
+        ensure_repo_access(repo, self.request.user, allow_public_read=True)
 
     def list(self, request, project_id=None):
         queryset = self.get_queryset()

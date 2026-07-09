@@ -5,6 +5,24 @@ function getCookie(name: string) {
   return v ? v[2] : "";
 }
 
+async function tryRefreshToken() {
+  const refresh = localStorage.getItem("refresh_token");
+  if (!refresh) return false;
+  try {
+    const res = await fetch(`${BASE}/auth/refresh/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    localStorage.setItem("access_token", data.access);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function request(path: string, options: RequestInit = {}) {
   const token = localStorage.getItem("access_token");
   const headers: Record<string, string> = {
@@ -13,7 +31,14 @@ async function request(path: string, options: RequestInit = {}) {
     ...(options.headers as Record<string, string>),
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${BASE}${path}`, { ...options, headers });
+  let res = await fetch(`${BASE}${path}`, { ...options, headers });
+  if (res.status === 401 && token) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) {
+      headers["Authorization"] = `Bearer ${localStorage.getItem("access_token")}`;
+      res = await fetch(`${BASE}${path}`, { ...options, headers });
+    }
+  }
   if (res.status === 204) return null;
   const data = await res.json();
   if (!res.ok) throw new Error(data.detail || "Request failed");

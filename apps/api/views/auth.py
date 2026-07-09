@@ -3,15 +3,13 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.core.mail import send_mail
-from django.template.loader import render_to_string
-from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.accounts.ldap_auth import authenticate_ldap_user
@@ -127,7 +125,7 @@ class AuthViewSet(viewsets.GenericViewSet):
         try:
             refresh = RefreshToken(refresh_token)
             return Response({"access": str(refresh.access_token)})
-        except Exception:
+        except TokenError:
             return Response(
                 {"detail": "Invalid or expired token."}, status=status.HTTP_401_UNAUTHORIZED
             )
@@ -187,8 +185,7 @@ class AuthViewSet(viewsets.GenericViewSet):
             return Response({"detail": list(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
 
         user.set_password(password)
-        user.last_login = timezone.now()
-        user.save(update_fields=["password", "last_login"])
+        user.save(update_fields=["password"])
 
         return Response(
             {"detail": "Password has been reset successfully."},
@@ -202,6 +199,6 @@ class AuthViewSet(viewsets.GenericViewSet):
             try:
                 token = RefreshToken(refresh_token)
                 token.blacklist()
-            except Exception:
+            except TokenError:
                 pass
         return Response(status=status.HTTP_204_NO_CONTENT)
