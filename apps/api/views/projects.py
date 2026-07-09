@@ -1,3 +1,6 @@
+import logging
+
+from django.conf import settings
 from django.db.models import Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
@@ -13,6 +16,8 @@ from apps.repositories.models import (
     RepositoryAccess,
     validate_repository_component,
 )
+
+logger = logging.getLogger("mygit")
 
 
 class RepositorySerializer(serializers.ModelSerializer):
@@ -348,7 +353,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             integration_token = IntegrationToken.objects.filter(user=request.user, provider="github").first()
             if not integration_token:
                 return Response({"detail": "GitHub token not configured."}, status=status.HTTP_400_BAD_REQUEST)
-            token = integration_token.token
+            token = integration_token.get_token()
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -357,7 +362,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
         try:
             resp = requests.get("https://api.github.com/user/repos?per_page=100&sort=updated", headers=headers, timeout=10)
             if not resp.ok:
-                return Response({"detail": f"GitHub API error: {resp.text}"}, status=resp.status_code)
+                logger.error("GitHub API error for user %s: %s", request.user.username, resp.text[:200])
+                return Response({"detail": "Failed to fetch repositories from GitHub."}, status=502)
 
             repos = []
             for item in resp.json():
@@ -383,7 +389,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             integration_token = IntegrationToken.objects.filter(user=request.user, provider="gitlab").first()
             if not integration_token:
                 return Response({"detail": "GitLab token not configured."}, status=status.HTTP_400_BAD_REQUEST)
-            token = integration_token.token
+            token = integration_token.get_token()
 
         headers = {
             "PRIVATE-TOKEN": token,
@@ -391,7 +397,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
         try:
             resp = requests.get("https://gitlab.com/api/v4/projects?membership=true&simple=true&per_page=100&order_by=updated_at", headers=headers, timeout=10)
             if not resp.ok:
-                return Response({"detail": f"GitLab API error: {resp.text}"}, status=resp.status_code)
+                logger.error("GitLab API error for user %s: %s", request.user.username, resp.text[:200])
+                return Response({"detail": "Failed to fetch repositories from GitLab."}, status=502)
 
             repos = []
             for item in resp.json():
@@ -410,6 +417,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
     @action(methods=["post"], detail=False, url_path="import")
     def import_project(self, request):
         from apps.accounts.models import IntegrationToken
+        import os
         import subprocess
         import shutil
         from apps.git_service.hooks import install_hooks
@@ -451,7 +459,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if provider in ["github", "gitlab"] and not token:
             integration_token = IntegrationToken.objects.filter(user=request.user, provider=provider).first()
             if integration_token:
-                token = integration_token.token
+                token = integration_token.get_token()
 
         if provider == "github":
             if not repo_name:
@@ -496,7 +504,15 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
         cmd = ["git", "clone", "--bare", actual_clone_url, str(disk_path)]
         try:
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+            env = os.environ.copy()
+            if token and provider == "github":
+                env["GIT_ASKPASS"] = ""
+                env["GIT_USERNAME"] = token
+            elif token and provider == "gitlab":
+                env["GIT_ASKPASS"] = ""
+                env["GIT_USERNAME"] = "oauth2"
+                env["GIT_PASSWORD"] = token
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=90, env=env)
             if res.returncode != 0:
                 if disk_path.exists():
                     shutil.rmtree(disk_path)
@@ -541,10 +557,14 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(methods=["get"], detail=False, url_path="browse-disk")
     def browse_disk(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Permission denied."}, status=403)
+
         target_path = request.query_params.get("path", "")
         import os
         from pathlib import Path
 
+        allowed_root = os.path.realpath(getattr(settings, "MYGIT_REPOS_ROOT", ""))
         directories = []
         parent_path = None
         current_path = ""
@@ -563,6 +583,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
                     parent_path = None
                 else:
                     path_obj = Path(target_path).resolve(strict=True)
+                    if not str(path_obj).startswith(allowed_root):
+                        return Response({"detail": "Path outside allowed root."}, status=403)
                     current_path = str(path_obj)
                     if path_obj.parent != path_obj:
                         parent_path = str(path_obj.parent)
@@ -576,9 +598,11 @@ class ProjectViewSet(viewsets.ModelViewSet):
                     directories.sort(key=str.lower)
             else:
                 if not target_path:
-                    path_obj = Path("/")
+                    path_obj = Path(allowed_root) if allowed_root else Path("/")
                 else:
                     path_obj = Path(target_path).resolve(strict=True)
+                    if allowed_root and not str(path_obj).startswith(allowed_root):
+                        return Response({"detail": "Path outside allowed root."}, status=403)
 
                 current_path = str(path_obj)
                 if path_obj != Path("/"):
@@ -602,14 +626,21 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(methods=["post"], detail=False, url_path="create-disk-folder")
     def create_disk_folder(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Permission denied."}, status=403)
+
         parent_path = request.data.get("parent_path")
         name = request.data.get("name")
         if not parent_path or not name:
             return Response({"detail": "parent_path and name are required."}, status=status.HTTP_400_BAD_REQUEST)
 
         from pathlib import Path
+        import os
+        allowed_root = os.path.realpath(getattr(settings, "MYGIT_REPOS_ROOT", ""))
         try:
             target = (Path(parent_path) / name).resolve(strict=False)
+            if allowed_root and not str(target).startswith(allowed_root):
+                return Response({"detail": "Path outside allowed root."}, status=403)
             target.mkdir(parents=True, exist_ok=True)
             return Response({"path": str(target)})
         except Exception as e:

@@ -1,5 +1,4 @@
 from django.db import migrations
-from django.contrib.auth.hashers import make_password
 
 
 def seed_default_admin(apps, schema_editor):
@@ -17,9 +16,6 @@ def seed_default_admin(apps, schema_editor):
     admin.is_active = True
     admin.must_change_password = True
     update_fields = ["email", "is_superuser", "is_staff", "is_active", "must_change_password"]
-    if created:
-        admin.password = make_password("291263")
-        update_fields.append("password")
     admin.save(update_fields=update_fields)
 
 

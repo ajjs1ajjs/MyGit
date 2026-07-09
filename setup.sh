@@ -13,7 +13,7 @@ DETECTED_IP="${DETECTED_IP:-127.0.0.1}"
 DOMAIN="${DOMAIN:-$DETECTED_IP}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@users.mygit.local}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-291263}"
+ADMIN_PASSWORD="$(openssl rand -base64 12 2>/dev/null || python3 -c "import secrets;print(secrets.token_urlsafe(12))")"
 DB_PASSWORD="$(openssl rand -hex 24 2>/dev/null || python3 -c "import secrets;print(secrets.token_hex(24))")"
 REPO_URL="${REPO_URL:-https://github.com/ajjs1ajjs/MyGit.git}"
 
@@ -103,6 +103,8 @@ echo "[3/7] Installing Python backend..."
 
 DJANGO_SECRET_KEY=$(openssl rand -base64 48 2>/dev/null || python3 -c "import secrets;print(secrets.token_urlsafe(48))")
 
+MYGIT_ADMIN_PASSWORD="${ADMIN_PASSWORD}"
+
 cat > "${INSTALL_DIR}/backend/.env" <<EOF
 DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
 DJANGO_ALLOWED_HOSTS=${DOMAIN},${DETECTED_IP},localhost,127.0.0.1
@@ -121,6 +123,7 @@ SECURE_SSL_REDIRECT=False
 SESSION_COOKIE_SECURE=False
 CSRF_COOKIE_SECURE=False
 CSRF_TRUSTED_ORIGINS=http://${DETECTED_IP}:${PORT},http://localhost:${PORT}
+MYGIT_ADMIN_PASSWORD=${MYGIT_ADMIN_PASSWORD}
 EOF
 
 mkdir -p "${INSTALL_DIR}/repos" "${INSTALL_DIR}/backend/logs" "${INSTALL_DIR}/static" "${INSTALL_DIR}/media"
@@ -129,7 +132,7 @@ cd "${INSTALL_DIR}/backend"
 DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py migrate --noinput
 DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py collectstatic --noinput
 
-echo "from django.contrib.auth import get_user_model; User = get_user_model(); user, _ = User.objects.get_or_create(username='${ADMIN_USERNAME}', defaults={'email':'${ADMIN_EMAIL}'}); user.email='${ADMIN_EMAIL}'; user.set_password('${ADMIN_PASSWORD}'); user.is_superuser=True; user.is_staff=True; user.must_change_password=True; user.save()" | DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py shell 2>/dev/null || true
+echo "from django.contrib.auth import get_user_model; import os; User = get_user_model(); pw = os.environ.get('MYGIT_ADMIN_PASSWORD', '${ADMIN_PASSWORD}'); user, _ = User.objects.get_or_create(username='${ADMIN_USERNAME}', defaults={'email':'${ADMIN_EMAIL}', 'password':'!'}); user.email='${ADMIN_EMAIL}'; user.set_password(pw); user.is_superuser=True; user.is_staff=True; user.must_change_password=True; user.save()" | DJANGO_SETTINGS_MODULE=config.settings.production "${INSTALL_DIR}/venv/bin/python" manage.py shell 2>/dev/null || true
 
 VENV_BIN="${INSTALL_DIR}/venv/bin"
 
@@ -281,6 +284,7 @@ echo "  URL:      http://${DETECTED_IP}:${PORT}"
 echo "  Admin:    ${ADMIN_USERNAME}"
 echo "  Password: ${ADMIN_PASSWORD}"
 echo "  IMPORTANT: change this password immediately after first login."
+echo "  (Password is also stored in ${INSTALL_DIR}/backend/.env as MYGIT_ADMIN_PASSWORD)"
 echo ""
 echo "  Logs:     journalctl -u mygit-api -f"
 echo "  Backup:   ${INSTALL_DIR}/backend/scripts/mygit-backup /backup"

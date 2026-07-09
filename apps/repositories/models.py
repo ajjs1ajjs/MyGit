@@ -70,16 +70,22 @@ class Repository(BaseModel):
 
     @property
     def disk_path(self):
-        if self.custom_disk_path:
-            from pathlib import Path
-            return Path(self.custom_disk_path).resolve(strict=False)
+        from pathlib import Path
 
-        repo_root = getattr(settings, "MYGIT_REPOS_ROOT", None)
+        if self.custom_disk_path:
+            custom = Path(self.custom_disk_path).resolve(strict=False)
+            repo_root = getattr(settings, "MYGIT_REPOS_ROOT", None)
+            if repo_root:
+                root = Path(repo_root).resolve(strict=False)
+                if custom != root and not custom.is_relative_to(root):
+                    raise SuspiciousFileOperation(
+                        "Custom disk path escapes the configured repository root."
+                    )
+            return custom
+
         if repo_root is None:
             import os
-
             repo_root = os.path.join(settings.BASE_DIR, "repos")
-        from pathlib import Path
 
         root = Path(repo_root).resolve(strict=False)
         candidate = (root / f"{self.path}.git").resolve(strict=False)

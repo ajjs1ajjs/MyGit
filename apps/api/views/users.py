@@ -214,7 +214,8 @@ class UserViewSet(viewsets.GenericViewSet):
             tokens = IntegrationToken.objects.filter(user=user)
             data = []
             for t in tokens:
-                masked = t.token[:4] + "****" + t.token[-4:] if len(t.token) > 8 else "****"
+                raw = t.get_token()
+                masked = raw[:4] + "****" + raw[-4:] if len(raw) > 8 else "****"
                 data.append({
                     "id": t.id,
                     "provider": t.provider,
@@ -234,7 +235,8 @@ class UserViewSet(viewsets.GenericViewSet):
         obj, created = IntegrationToken.objects.update_or_create(
             user=user, provider=provider, defaults={"token": token}
         )
-        masked = obj.token[:4] + "****" + obj.token[-4:] if len(obj.token) > 8 else "****"
+        raw = obj.get_token()
+        masked = raw[:4] + "****" + raw[-4:] if len(raw) > 8 else "****"
         return Response({
             "id": obj.id,
             "provider": obj.provider,

@@ -24,9 +24,12 @@ def validate_webhook_url(url_str: str) -> bool:
     try:
         host = parsed.hostname or ""
         port = parsed.port or 80
-        ip = socket.getaddrinfo(host, port)[0][4][0]
-        addr = ipaddress.ip_address(ip)
-        return not any(addr in net for net in BLOCKED_NETWORKS)
+        for addrinfo in socket.getaddrinfo(host, port):
+            ip = addrinfo[4][0]
+            addr = ipaddress.ip_address(ip)
+            if any(addr in net for net in BLOCKED_NETWORKS):
+                return False
+        return True
     except Exception:
         return False
 

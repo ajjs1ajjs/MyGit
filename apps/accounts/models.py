@@ -116,7 +116,7 @@ class IntegrationToken(BaseModel):
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="integration_tokens")
     provider = models.CharField(max_length=50, choices=Provider.choices)
-    token = models.CharField(max_length=255)
+    token = models.CharField(max_length=512)
 
     class Meta:
         db_table = "accounts_integrationtoken"
@@ -127,4 +127,30 @@ class IntegrationToken(BaseModel):
 
     def __str__(self):
         return f"{self.user.username} - {self.provider}"
+
+    def _get_fernet(self):
+        from django.conf import settings
+        import hashlib
+        import base64
+        from cryptography.fernet import Fernet
+
+        raw = settings.ENCRYPTION_KEY or settings.SECRET_KEY
+        key = base64.urlsafe_b64encode(hashlib.sha256(raw.encode()).digest())
+        return Fernet(key)
+
+    def get_token(self) -> str:
+        if not self.token.startswith("gAAAAA"):
+            return self.token
+        try:
+            return self._get_fernet().decrypt(self.token.encode()).decode()
+        except Exception:
+            return ""
+
+    def set_token(self, raw: str):
+        self.token = self._get_fernet().encrypt(raw.encode()).decode()
+
+    def save(self, *args, **kwargs):
+        if self.pk and self.token and not self.token.startswith("gAAAAA"):
+            self.set_token(self.token)
+        super().save(*args, **kwargs)
 

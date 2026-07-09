@@ -138,34 +138,17 @@ class AuthViewSet(viewsets.GenericViewSet):
         user = User.objects.filter(email=email, is_active=True).first()
 
         if user:
-            import threading
-
-            thread = threading.Thread(target=self._send_reset_email, args=(user,))
-            thread.start()
-
-        return Response(
-            {"detail": "If this email exists, a reset link has been sent."},
-            status=status.HTTP_200_OK,
-        )
-
-    def _send_reset_email(self, user):
-        token = token_generator.make_token(user)
-        site_name = getattr(settings, "MYGIT_SITE_NAME", "MyGit")
-        context = {
-            "user": user,
-            "token": token,
-            "site_name": site_name,
-        }
-        subject = render_to_string("email/password_reset_subject.txt", context)
-        body = render_to_string("email/password_reset_body.txt", context)
-
-        send_mail(
-            subject=subject.strip(),
-            message=body,
-            from_email=None,
-            recipient_list=[user.email],
-            fail_silently=True,
-        )
+            token = token_generator.make_token(user)
+            site_name = getattr(settings, "MYGIT_SITE_NAME", "MyGit")
+            context = {
+                "user_id": str(user.id),
+                "username": user.username,
+                "email": user.email,
+                "token": token,
+                "site_name": site_name,
+            }
+            from apps.notifications.tasks import send_password_reset_email
+            send_password_reset_email.delay(context)
 
         return Response(
             {"detail": "If this email exists, a reset link has been sent."},

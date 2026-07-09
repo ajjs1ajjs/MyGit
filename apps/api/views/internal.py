@@ -21,9 +21,8 @@ def require_internal_token(view_func):
         token = request.META.get("HTTP_AUTHORIZATION", "")
         expected = getattr(settings, "MYGIT_INTERNAL_API_TOKEN", "")
         if not expected:
-            if not settings.DEBUG:
-                return JsonResponse({"detail": "Internal API token is not configured."}, status=503)
-            return view_func(request, *args, **kwargs)
+            logger.critical("MYGIT_INTERNAL_API_TOKEN is not configured! SSH hooks will not work.")
+            return JsonResponse({"detail": "Internal API token is not configured."}, status=503)
         if not constant_time_compare(token, f"Bearer {expected}"):
             return JsonResponse({"detail": "Forbidden."}, status=403)
         return view_func(request, *args, **kwargs)

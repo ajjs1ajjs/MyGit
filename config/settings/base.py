@@ -175,6 +175,7 @@ SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
 MYGIT_SITE_NAME = env("MYGIT_SITE_NAME", default="MyGit")
 MYGIT_REPOS_ROOT = env("MYGIT_REPOS_ROOT", default=str(BASE_DIR / "repos"))
 MYGIT_INTERNAL_API_TOKEN = env("MYGIT_INTERNAL_API_TOKEN", default="")
+ENCRYPTION_KEY = env("ENCRYPTION_KEY", default="")
 
 MYGIT_LDAP_ENABLED = env.bool("MYGIT_LDAP_ENABLED", default=False)
 MYGIT_LDAP_SERVER_URI = env("MYGIT_LDAP_SERVER_URI", default="")
