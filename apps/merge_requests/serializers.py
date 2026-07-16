@@ -8,6 +8,7 @@ class MergeRequestListSerializer(serializers.ModelSerializer):
     assignee_username = serializers.CharField(
         source="assignee.username", read_only=True, allow_null=True
     )
+    latest_pipeline_status = serializers.SerializerMethodField()
 
     class Meta:
         model = MergeRequest
@@ -22,10 +23,17 @@ class MergeRequestListSerializer(serializers.ModelSerializer):
             "author_username",
             "assignee",
             "assignee_username",
+            "latest_pipeline_status",
             "created_at",
             "updated_at",
             "merged_at",
         ]
+
+    def get_latest_pipeline_status(self, obj):
+        pipeline = obj.repository.pipelines.filter(ref=obj.source_branch).order_by("-created_at").first()
+        if not pipeline:
+            return None
+        return {"id": str(pipeline.id), "status": pipeline.status}
 
 
 class MergeRequestDetailSerializer(serializers.ModelSerializer):
@@ -36,6 +44,7 @@ class MergeRequestDetailSerializer(serializers.ModelSerializer):
     merged_by_username = serializers.CharField(
         source="merged_by.username", read_only=True, allow_null=True
     )
+    latest_pipeline_status = serializers.SerializerMethodField()
 
     class Meta:
         model = MergeRequest
@@ -56,6 +65,7 @@ class MergeRequestDetailSerializer(serializers.ModelSerializer):
             "merge_commit_sha",
             "merged_at",
             "closes_issues",
+            "latest_pipeline_status",
             "created_at",
             "updated_at",
         ]
@@ -70,6 +80,12 @@ class MergeRequestDetailSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def get_latest_pipeline_status(self, obj):
+        pipeline = obj.repository.pipelines.filter(ref=obj.source_branch).order_by("-created_at").first()
+        if not pipeline:
+            return None
+        return {"id": str(pipeline.id), "status": pipeline.status}
 
 
 class MergeRequestCreateSerializer(serializers.ModelSerializer):

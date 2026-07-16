@@ -9,6 +9,9 @@
           !{{ mr.number }} &middot; {{ mr.author_username }} wants to merge {{ mr.source_branch }} into {{ mr.target_branch }}
         </p>
         <span :class="stateClass" class="inline-block mt-2 px-2 py-0.5 text-xs rounded-full font-medium">{{ mr.state }}</span>
+        <span v-if="mr.latest_pipeline_status" :class="pipelineClass" class="inline-block mt-2 ml-2 px-2 py-0.5 text-xs rounded-full font-medium">
+          Pipeline: {{ mr.latest_pipeline_status.status }}
+        </span>
       </div>
 
       <div class="bg-white dark:bg-slate-800 border rounded-lg p-4 mb-6" v-if="mr.description">
@@ -85,6 +88,18 @@ const stateClass = computed(() => {
     closed: "bg-red-100 text-red-800",
   };
   return map[state] || "";
+});
+
+const pipelineClass = computed(() => {
+  const status = mr.value?.latest_pipeline_status?.status || "";
+  const map: Record<string, string> = {
+    pending: "bg-yellow-100 text-yellow-800",
+    running: "bg-blue-100 text-blue-800",
+    success: "bg-green-100 text-green-800",
+    failed: "bg-red-100 text-red-800",
+    canceled: "bg-gray-100 text-gray-800",
+  };
+  return map[status] || "bg-gray-100 text-gray-800";
 });
 
 function renderMd(text: string) {

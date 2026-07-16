@@ -222,3 +222,41 @@ class JobViewSet(viewsets.GenericViewSet):
             .order_by("stage", "created_at")[:1]
         )
         return Response(JobSerializer(jobs, many=True).data)
+
+    @action(methods=["post"], detail=True, url_path="artifacts")
+    def upload_artifact(self, request, project_id=None, pipeline_id=None, id=None):
+        job = get_object_or_404(self.get_queryset(), id=id)
+        file = request.FILES.get("file")
+        name = request.data.get("name", "")
+        if not file or not name:
+            return Response({"detail": "file and name are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        import os
+        artifacts_dir = settings.BASE_DIR / "artifacts" / str(job.pipeline.repository_id) / str(pipeline_id) / str(job.id)
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+        file_path = artifacts_dir / name
+        with open(file_path, "wb+") as f:
+            for chunk in file.chunks():
+                f.write(chunk)
+
+        current = job.artifacts or []
+        if name not in current:
+            current.append(name)
+        job.artifacts = current
+        job.save(update_fields=["artifacts"])
+
+        return Response({"detail": "OK", "name": name, "size": file.size})
+
+    @action(methods=["get"], detail=True, url_path="artifacts/(?P<artifact_name>.+)")
+    def download_artifact(self, request, project_id=None, pipeline_id=None, id=None, artifact_name=None):
+        job = get_object_or_404(self.get_queryset(), id=id)
+        artifacts_dir = settings.BASE_DIR / "artifacts" / str(job.pipeline.repository_id) / str(pipeline_id) / str(job.id)
+        file_path = artifacts_dir / artifact_name
+        if not file_path.exists():
+            return Response({"detail": "Artifact not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        from django.http import FileResponse
+        response = FileResponse(open(file_path, "rb"))
+        response["Content-Disposition"] = f'attachment; filename="{artifact_name}"'
+        return response
