@@ -20,7 +20,7 @@ from apps.webhooks.views import WebhookViewSet
 from apps.wiki.views import WikiPageViewSet
 
 from .views.auth import AuthViewSet
-from .views.internal import authorized_keys, check_access, post_receive, pre_receive
+from .views.internal import authorized_keys, check_access, ci_pending_jobs, post_receive, pre_receive
 from .views.projects import ProjectViewSet
 from .views.users import UserViewSet
 
@@ -69,6 +69,7 @@ urlpatterns = [
     path("internal/check_access", check_access, name="check-access"),
     path("internal/pre-receive", pre_receive, name="pre-receive"),
     path("internal/post-receive", post_receive, name="post-receive"),
+    path("internal/ci/jobs/pending", ci_pending_jobs, name="ci-pending-jobs"),
     path("search", global_search, name="global-search"),
     path("", include(router.urls)),
 ]

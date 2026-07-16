@@ -9,10 +9,12 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.accounts.models import SSHKey
+from apps.ci_cd.models import Job, Pipeline
 from apps.repositories.models import ProtectedBranch, Repository, RepositoryAccess
 
 logger = logging.getLogger("mygit")
 User = get_user_model()
+
 
 
 def require_internal_token(view_func):
@@ -195,3 +197,31 @@ def _matching_protected_branch(repo: Repository, branch: str) -> ProtectedBranch
         if rule.matches(branch):
             return rule
     return None
+
+
+@csrf_exempt
+@require_GET
+@require_internal_token
+def ci_pending_jobs(request):
+    """Get pending CI jobs for runner to claim."""
+    # Get the first pending job from the earliest pipeline
+    job = (
+        Job.objects.select_related("pipeline", "pipeline__repository")
+        .filter(status=Job.Status.PENDING)
+        .order_by("pipeline__created_at", "stage", "created_at")
+        .first()
+    )
+    if not job:
+        return JsonResponse({"jobs": []})
+    
+    pipeline = job.pipeline
+    repo = pipeline.repository
+    
+    return JsonResponse({
+        "jobs": [{
+            "id": str(job.id),
+            "name": job.name,
+            "stage": job.stage,
+            "pipeline": f"{repo.id}/{pipeline.id}",
+        }]
+    })
