@@ -36,6 +36,10 @@
             </button>
           </div>
           <span>{{ content?.length || 0 }} bytes</span>
+          <RouterLink :to="getRawLink()" class="btn btn-ghost text-xs px-2 py-1 min-h-0 hover:bg-blue-100 dark:hover:bg-blue-900/30" target="_blank" rel="noopener">
+            <svg class="w-3.5 h-3.5 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            Raw
+          </RouterLink>
         </div>
       </div>
       
@@ -48,7 +52,9 @@
           <tbody>
             <tr v-for="(line, i) in contentLines" :key="i" class="hover:bg-gray-50 dark:hover:bg-slate-800">
               <td class="pl-4 pr-3 py-0.5 text-right text-xs text-gray-400 select-none border-r w-12">{{ i + 1 }}</td>
-              <td class="pl-4 py-0.5 whitespace-pre-wrap break-words"><code>{{ line }}</code></td>
+              <td class="pl-4 py-0.5 whitespace-pre-wrap break-words">
+                <code :class="['hljs', 'language-' + language]" v-html="highlightedLine(line, i)"></code>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -90,6 +96,45 @@ const isMarkdown = computed(() => {
   return filePath.toLowerCase().endsWith(".md");
 });
 
+const language = computed(() => {
+  const ext = filePath.split(".").pop()?.toLowerCase();
+  const langMap: Record<string, string> = {
+    py: "python",
+    js: "javascript",
+    ts: "typescript",
+    tsx: "typescript",
+    jsx: "javascript",
+    json: "json",
+    yml: "yaml",
+    yaml: "yaml",
+    toml: "toml",
+    sh: "bash",
+    bash: "bash",
+    zsh: "bash",
+    dockerfile: "dockerfile",
+    docker: "dockerfile",
+    rb: "ruby",
+    go: "go",
+    rs: "rust",
+    java: "java",
+    kt: "kotlin",
+    c: "c",
+    h: "c",
+    cpp: "cpp",
+    cc: "cpp",
+    hpp: "cpp",
+    cs: "csharp",
+    php: "php",
+    html: "xml",
+    xml: "xml",
+    css: "css",
+    scss: "scss",
+    sql: "sql",
+    md: "markdown",
+  };
+  return langMap[ext || ""] || "plaintext";
+});
+
 const renderedMarkdown = computed(() => {
   if (!content.value) return "";
   try {
@@ -102,6 +147,20 @@ const renderedMarkdown = computed(() => {
 function getBreadcrumbLink(index: number) {
   const parts = filePathParts.value.slice(0, index + 1);
   return `/${repoUsername}/${repoName}/-/tree/${refParam}/${parts.join("/")}`;
+}
+
+function getRawLink() {
+  const ref = refParam || "main";
+  return `/${repoUsername}/${repoName}/-/raw/${ref}/${encodeURIComponent(filePath)}`;
+}
+
+function highlightedLine(line: string, index: number): string {
+  if (!content.value) return "";
+  try {
+    return hljs.highlight(line, { language: language.value }).value;
+  } catch (e) {
+    return line;
+  }
 }
 
 watch(repoId, async (id) => {

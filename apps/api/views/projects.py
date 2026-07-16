@@ -246,6 +246,46 @@ class ProjectViewSet(viewsets.ModelViewSet):
         except (GitServiceError, KeyError) as e:
             return Response({"detail": str(e)}, status=404)
 
+    @action(methods=["get"], detail=True, url_path="raw/(?P<sha>[^/]+)")
+    def raw_blob_by_sha(self, request, id=None, sha=None):
+        repo = self.get_object()
+        try:
+            backend = self._get_backend(repo)
+            content, blob_sha = backend.get_blob(sha)
+            from django.http import HttpResponse
+            response = HttpResponse(content, content_type="text/plain; charset=utf-8")
+            return response
+        except (GitServiceError, KeyError) as e:
+            return Response({"detail": str(e)}, status=404)
+
+    @action(methods=["get"], detail=True, url_path="raw/(?P<ref>[^/]+)/(?P<path>.+)")
+    def raw_blob_by_path(self, request, id=None, ref=None, path=None):
+        repo = self.get_object()
+        try:
+            backend = self._get_backend(repo)
+            content, blob_sha = backend.get_blob_by_path(ref, path)
+            from django.http import HttpResponse
+            response = HttpResponse(content, content_type="text/plain; charset=utf-8")
+            return response
+        except (GitServiceError, KeyError) as e:
+            return Response({"detail": str(e)}, status=404)
+
+    @action(methods=["get"], detail=True, url_path="raw")
+    def raw_blob_by_path(self, request, id=None):
+        repo = self.get_object()
+        ref = request.query_params.get("ref", repo.default_branch)
+        path = request.query_params.get("path", "")
+        if not path:
+            return Response({"detail": "path parameter is required."}, status=400)
+        try:
+            backend = self._get_backend(repo)
+            content, blob_sha = backend.get_blob_by_path(ref, path)
+            from django.http import HttpResponse
+            response = HttpResponse(content, content_type="text/plain; charset=utf-8")
+            return response
+        except (GitServiceError, KeyError) as e:
+            return Response({"detail": str(e)}, status=404)
+
     @action(methods=["get"], detail=True, url_path="blame")
     def blame(self, request, id=None):
         repo = self.get_object()
