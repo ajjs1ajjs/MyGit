@@ -1,0 +1,10 @@
+A new merge request has been created in {{ repo_path }}.
+
+Title: {{ mr_title }}
+Author: {{ author_username }}
+Number: !{{ mr_number }}
+
+{{ mr_description }}
+
+---
+View at: {{ site_url }}/{{ repo_path }}/-/merge_requests/{{ mr_number }}

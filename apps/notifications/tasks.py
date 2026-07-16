@@ -30,3 +30,35 @@ def send_password_reset_email(context: dict):
         recipient_list=[user.email],
         fail_silently=True,
     )
+
+
+@shared_task
+def send_mr_notification(context: dict):
+    recipients = context.get("recipients", [])
+    if not recipients:
+        return
+    subject = render_to_string("email/mr_created_subject.txt", context)
+    body = render_to_string("email/mr_created_body.txt", context)
+    send_mail(
+        subject=subject.strip(),
+        message=body,
+        from_email=None,
+        recipient_list=recipients,
+        fail_silently=True,
+    )
+
+
+@shared_task
+def send_issue_notification(context: dict):
+    recipients = context.get("recipients", [])
+    if not recipients:
+        return
+    subject = render_to_string("email/issue_created_subject.txt", context)
+    body = render_to_string("email/issue_created_body.txt", context)
+    send_mail(
+        subject=subject.strip(),
+        message=body,
+        from_email=None,
+        recipient_list=recipients,
+        fail_silently=True,
+    )

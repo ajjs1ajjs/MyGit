@@ -212,6 +212,19 @@ class JobViewSet(viewsets.GenericViewSet):
         if job.status in (Job.Status.SUCCESS, Job.Status.FAILED):
             _update_pipeline_status(job.pipeline)
 
+        # Broadcast log update to WebSocket
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f"job_{job.id}",
+            {
+                "type": "job.log",
+                "data": serializer.validated_data.get("log", ""),
+                "status": new_status if "status" in serializer.validated_data else job.status,
+            },
+        )
+
         return Response(JobSerializer(job).data)
 
     @action(methods=["get"], detail=False)

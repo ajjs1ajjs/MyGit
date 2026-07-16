@@ -1,3 +1,5 @@
+from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -7,6 +9,9 @@ from rest_framework.response import Response
 
 from apps.api.mixins import ensure_repo_access
 from apps.git_service.backend import GitBackend, GitServiceError
+from apps.notifications.tasks import send_mr_notification
+from apps.notifications.models import Notification
+from apps.organizations.models import Group, GroupMember
 from apps.repositories.models import ProtectedBranch, Repository, RepositoryAccess
 
 from .models import MergeRequest, MergeRequestComment, MergeRequestReview
@@ -17,6 +22,8 @@ from .serializers import (
     MergeRequestListSerializer,
     MergeRequestReviewSerializer,
 )
+
+User = get_user_model()
 
 
 class MergeRequestViewSet(viewsets.GenericViewSet):
@@ -77,6 +84,40 @@ class MergeRequestViewSet(viewsets.GenericViewSet):
         serializer = MergeRequestCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         mr = serializer.save(repository=repo, author=request.user)
+
+        # Create in-app notifications and send emails
+        recipients = set()
+        if repo.owner_type == "organization":
+            group = Group.objects.filter(id=repo.owner_id).first()
+            if group:
+                members = GroupMember.objects.filter(group=group)
+                for m in members:
+                    if m.user_id != request.user.id:
+                        recipients.add(m.user)
+        if repo.owner_type == "user" and str(repo.owner_id) != str(request.user.id):
+            try:
+                owner = User.objects.get(id=repo.owner_id)
+                recipients.add(owner)
+            except User.DoesNotExist:
+                pass
+        for user in recipients:
+            Notification.objects.create(
+                recipient=user,
+                type=Notification.Type.MERGE_REQUEST,
+                title=f"New MR !{mr.number}: {mr.title}",
+                message=mr.description[:500] if mr.description else "",
+                link=f"/{repo.path}/-/merge_requests/{mr.number}",
+            )
+        send_mr_notification.delay({
+            "recipients": list(u.email for u in recipients if u.email),
+            "repo_path": repo.path,
+            "mr_title": mr.title,
+            "mr_number": mr.number,
+            "mr_description": mr.description or "",
+            "author_username": request.user.username,
+            "site_url": getattr(settings, "MYGIT_SITE_URL", f"http://{request.get_host()}"),
+        })
+
         return Response(MergeRequestDetailSerializer(mr).data, status=status.HTTP_201_CREATED)
 
     def retrieve(self, request, project_id=None, number=None):

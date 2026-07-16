@@ -1,3 +1,5 @@
+from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -6,7 +8,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.api.mixins import ensure_repo_access
+from apps.notifications.tasks import send_issue_notification, send_mr_notification
+from apps.notifications.models import Notification
 from apps.repositories.models import Repository, RepositoryAccess
+from apps.organizations.models import Group, GroupMember
+
+User = get_user_model()
 
 from .models import Issue, IssueComment, Label, Milestone
 from .serializers import (
@@ -80,6 +87,37 @@ class IssueViewSet(viewsets.GenericViewSet):
         serializer = IssueCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         issue = serializer.save(repository=repo, author=request.user)
+
+        # Create in-app notifications and send emails
+        recipients = set()
+        members = GroupMember.objects.filter(group__in=Group.objects.filter(id=repo.owner_id)) if repo.owner_type == "organization" else []
+        for m in members:
+            if m.user_id != request.user.id:
+                recipients.add(m.user)
+        if repo.owner_type == "user" and str(repo.owner_id) != str(request.user.id):
+            try:
+                owner = User.objects.get(id=repo.owner_id)
+                recipients.add(owner)
+            except User.DoesNotExist:
+                pass
+        for user in recipients:
+            Notification.objects.create(
+                recipient=user,
+                type=Notification.Type.ISSUE,
+                title=f"New issue #{issue.number}: {issue.title}",
+                message=issue.description[:500],
+                link=f"/{repo.path}/-/issues/{issue.number}",
+            )
+        send_issue_notification.delay({
+            "recipients": list(u.email for u in recipients if u.email),
+            "repo_path": repo.path,
+            "issue_title": issue.title,
+            "issue_number": issue.number,
+            "issue_description": issue.description or "",
+            "author_username": request.user.username,
+            "site_url": getattr(settings, "MYGIT_SITE_URL", f"http://{request.get_host()}"),
+        })
+
         return Response(IssueDetailSerializer(issue).data, status=status.HTTP_201_CREATED)
 
     def retrieve(self, request, project_id=None, number=None):
