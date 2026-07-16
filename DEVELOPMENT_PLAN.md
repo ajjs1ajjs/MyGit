@@ -76,132 +76,132 @@
 - [x] Шифрування backup-архівів перед відправкою у хмару.
 - [x] Автоматичний тест відновлення в окреме staging-середовище.
 - [x] Реплікація Git-репозиторіїв у хмарний backup-target.
-- [ ] Розклад бекапів у UI адміністратора з журналом останніх запусків.
-- [ ] Реплікація Git-репозиторіїв на другий сервер для швидкого disaster recovery.
-- [ ] UI для імпорту репозиторіїв з GitHub/GitLab/Gitea.
-- [ ] Захищені гілки, CODEOWNERS і обов'язкові approvals для merge requests.
-- [ ] Releases з артефактами, changelog і підписаними тегами.
-- [ ] Пакетний пошук по коду з індексацією репозиторіїв.
-- [ ] Аудит-лог дій адміністратора і користувачів.
-- [ ] 2FA/WebAuthn для адміністраторів і критичних операцій.
+- [x] Розклад бекапів у UI адміністратора з журналом останніх запусків.
+- [x] Реплікація Git-репозиторіїв на другий сервер для швидкого disaster recovery.
+- [x] UI для імпорту репозиторіїв з GitHub/GitLab/Gitea.
+- [x] Захищені гілки, CODEOWNERS і обов'язкові approvals для merge requests.
+- [x] Releases з артефактами, changelog і підписаними тегами.
+- [x] Пакетний пошук по коду з індексацією репозиторіїв.
+- [x] Аудит-лог дій адміністратора і користувачів.
+- [x] 2FA/WebAuthn для адміністраторів і критичних операцій.
 
 ### Фаза 0 — Інфраструктура (тиждень 1-2)
 
-- [ ] Ініціалізація Django-проєкту (`config/`, `apps/`)
-- [ ] Налаштування Docker Compose (Django + PostgreSQL + Redis + Nginx)
-- [ ] Налаштування CI/CD (GitHub Actions: ruff, mypy, pytest)
-- [ ] Кастомна модель `User` (`accounts.User`)
-- [ ] Базова адмінка Django для керування користувачами
-- [ ] Налаштування `.env` через `django-environ`
+- [x] Ініціалізація Django-проєкту (`config/`, `apps/`)
+- [x] Налаштування Docker Compose (Django + PostgreSQL + Redis + Nginx)
+- [x] Налаштування CI/CD (GitHub Actions: ruff, mypy, pytest)
+- [x] Кастомна модель `User` (`accounts.User`)
+- [x] Базова адмінка Django для керування користувачами
+- [x] Налаштування `.env` через `django-environ`
 
 ### Фаза 1 — Користувачі та автентифікація (тиждень 3-4)
 
-- [ ] Реєстрація, логін, логаут, відновлення пароля
-- [ ] Профіль користувача (аватар, ім'я, email, біо)
-- [ ] SSH-ключі (додавання, видалення, валідація)
-- [ ] Personal Access Tokens (створення, відкликання, scopes)
-- [ ] JWT-ендпоінти (login/refresh/verify/logout)
-- [ ] Ролі (admin / user) — `is_superuser` для адміністраторів
-- [ ] `AuthorizedKeysCommand` скрипт для SSH-доступу
+- [x] Реєстрація, логін, логаут, відновлення пароля
+- [x] Профіль користувача (аватар, ім'я, email, біо)
+- [x] SSH-ключі (додавання, видалення, валідація)
+- [x] Personal Access Tokens (створення, відкликання, scopes)
+- [x] JWT-ендпоінти (login/refresh/verify/logout)
+- [x] Ролі (admin / user) — `is_superuser` для адміністраторів
+- [x] `AuthorizedKeysCommand` скрипт для SSH-доступу
 
 ### Фаза 2 — Репозиторії: ядро (тиждень 5-7)
 
-- [ ] Модель `Repository` (owner, name, description, visibility, default_branch)
-- [ ] CRUD репозиторіїв через API + Web UI
-- [ ] Ініціалізація bare-репозиторія на диску
-- [ ] Smart HTTP: `git-upload-pack` (pull/clone)
-- [ ] Smart HTTP: `git-receive-pack` (push)
-- [ ] Git over SSH через скрипт-обгортку
-- [ ] `pre-receive` / `post-receive` хуки для валідації та логування
-- [ ] Private/public видимість із перевіркою прав доступу
-- [ ] Fork репозиторія
-- [ ] Видалення та архівація репозиторія
+- [x] Модель `Repository` (owner, name, description, visibility, default_branch)
+- [x] CRUD репозиторіїв через API + Web UI
+- [x] Ініціалізація bare-репозиторія на диску
+- [x] Smart HTTP: `git-upload-pack` (pull/clone)
+- [x] Smart HTTP: `git-receive-pack` (push)
+- [x] Git over SSH через скрипт-обгортку
+- [x] `pre-receive` / `post-receive` хуки для валідації та логування
+- [x] Private/public видимість із перевіркою прав доступу
+- [x] Fork репозиторія
+- [x] Видалення та архівація репозиторія
 
 ### Фаза 3 — Перегляд коду (тиждень 8-10)
 
-- [ ] Файловий браузер (дерево директорій, `git ls-tree`)
-- [ ] Перегляд файлів із підсвічуванням синтаксису (highlight.js / Prism)
-- [ ] Історія комітів (пагінація, граф)
-- [ ] Перегляд коміту (diff, статистика)
-- [ ] `git blame` для файлів
-- [ ] Гілки (список, створення, видалення)
-- [ ] Теги (список, створення, видалення, annotated tags)
-- [ ] Завантаження архіву репозиторія (tar.gz, zip)
-- [ ] Raw-перегляд файлу
-- [ ] README.md рендеринг на головній сторінці репо
+- [x] Файловий браузер (дерево директорій, `git ls-tree`)
+- [x] Перегляд файлів із підсвічуванням синтаксису (highlight.js / Prism)
+- [x] Історія комітів (пагінація, граф)
+- [x] Перегляд коміту (diff, статистика)
+- [x] `git blame` для файлів
+- [x] Гілки (список, створення, видалення)
+- [x] Теги (список, створення, видалення, annotated tags)
+- [x] Завантаження архіву репозиторія (tar.gz, zip)
+- [x] Raw-перегляд файлу
+- [x] README.md рендеринг на головній сторінці репо
 
 ### Фаза 4 — Issues (тиждень 11-13)
 
-- [ ] Модель `Issue` (title, description, state, labels, milestone, assignee)
-- [ ] CRUD issues через API + UI
-- [ ] Лейбли (назва, колір)
-- [ ] Milestones (назва, дедлайн, прогрес)
-- [ ] Призначення відповідальних (assignees)
-- [ ] Закриття/відкриття issue
-- [ ] Коментарі до issues (Markdown)
-- [ ] Пошук та фільтрація issues
-- [ ] Board view (Kanban-дошка)
+- [x] Модель `Issue` (title, description, state, labels, milestone, assignee)
+- [x] CRUD issues через API + UI
+- [x] Лейбли (назва, колір)
+- [x] Milestones (назва, дедлайн, прогрес)
+- [x] Призначення відповідальних (assignees)
+- [x] Закриття/відкриття issue
+- [x] Коментарі до issues (Markdown)
+- [x] Пошук та фільтрація issues
+- [x] Board view (Kanban-дошка)
 
 ### Фаза 5 — Merge Requests (тиждень 14-17)
 
-- [ ] Модель `MergeRequest` (source_branch, target_branch, title, state)
-- [ ] Створення MR: вибір гілок, опис, assignee, reviewer
-- [ ] Diff-перегляд (зміни між source і target)
-- [ ] Inline-коментарі до рядків дифу
-- [ ] Загальні коментарі до MR
-- [ ] Статуси MR: open, draft, merged, closed
-- [ ] Кнопка Merge (fast-forward / merge commit / squash)
-- [ ] Перевірка конфліктів перед merge
-- [ ] Автоматичне закриття issue через MR (closes #123)
-- [ ] Activity feed
+- [x] Модель `MergeRequest` (source_branch, target_branch, title, state)
+- [x] Створення MR: вибір гілок, опис, assignee, reviewer
+- [x] Diff-перегляд (зміни між source і target)
+- [x] Inline-коментарі до рядків дифу
+- [x] Загальні коментарі до MR
+- [x] Статуси MR: open, draft, merged, closed
+- [x] Кнопка Merge (fast-forward / merge commit / squash)
+- [x] Перевірка конфліктів перед merge
+- [x] Автоматичне закриття issue через MR (closes #123)
+- [x] Activity feed
 
 ### Фаза 6 — Організації та групи (тиждень 18-20)
 
-- [ ] Модель `Organization` / `Group` (name, path, description, avatar)
-- [ ] Учасники групи з ролями (Owner, Maintainer, Developer, Reporter, Guest)
-- [ ] Репозиторії групи
-- [ ] Підгрупи (subgroups, ієрархія)
-- [ ] Успадкування прав (група → підгрупа → репозиторій)
-- [ ] Команди (teams) усередині груп
+- [x] Модель `Organization` / `Group` (name, path, description, avatar)
+- [x] Учасники групи з ролями (Owner, Maintainer, Developer, Reporter, Guest)
+- [x] Репозиторії групи
+- [x] Підгрупи (subgroups, ієрархія)
+- [x] Успадкування прав (група → підгрупа → репозиторій)
+- [x] Команди (teams) усередині груп
 
 ### Фаза 7 — Wiki, Snippets, Пошук (тиждень 21-23)
 
-- [ ] Wiki на репозиторій (сторінки в Markdown, git-backed)
-- [ ] Snippets (Gist-аналоги: код + опис, public/private)
-- [ ] Повнотекстовий пошук (PostgreSQL FTS або Elasticsearch)
+- [x] Wiki на репозиторій (сторінки в Markdown, git-backed)
+- [x] Snippets (Gist-аналоги: код + опис, public/private)
+- [x] Повнотекстовий пошук (PostgreSQL FTS або Elasticsearch)
   - Репозиторії, issues, MR, код, wiki
-- [ ] Глобальний activity feed
+- [x] Глобальний activity feed
 
 ### Фаза 8 — CI/CD (тиждень 24-28)
 
-- [ ] Модель `Pipeline` (status, ref, commit, stages)
-- [ ] Модель `Job` (name, stage, status, log, artifacts)
-- [ ] Файл конфігурації `.mygit-ci.yml`
-- [ ] CI-раннер (окремий процес, опитує сервер)
-- [ ] Виконання джоб у Docker-контейнерах
-- [ ] Перегляд логів джоби в реальному часі (WebSocket)
-- [ ] Артефакти збірки
-- [ ] Інтеграція з MR (статус перевірок)
+- [x] Модель `Pipeline` (status, ref, commit, stages)
+- [x] Модель `Job` (name, stage, status, log, artifacts)
+- [x] Файл конфігурації `.mygit-ci.yml`
+- [x] CI-раннер (окремий процес, опитує сервер)
+- [x] Виконання джоб у Docker-контейнерах
+- [x] Перегляд логів джоби в реальному часі (WebSocket)
+- [x] Артефакти збірки
+- [x] Інтеграція з MR (статус перевірок)
 
 ### Фаза 9 — Webhooks, Сповіщення, API (тиждень 29-31)
 
-- [ ] Webhooks (repo-level + system-level)
-- [ ] Доставка вебхуків (Celery tasks з retry)
-- [ ] Email-сповіщення (реєстрація, MR, issue зміни)
-- [ ] In-app сповіщення (WebSocket / polling)
-- [ ] REST API документація (OpenAPI/Swagger)
-- [ ] Rate limiting
+- [x] Webhooks (repo-level + system-level)
+- [x] Доставка вебхуків (Celery tasks з retry)
+- [x] Email-сповіщення (реєстрація, MR, issue зміни)
+- [x] In-app сповіщення (WebSocket / polling)
+- [x] REST API документація (OpenAPI/Swagger)
+- [x] Rate limiting
 
 ### Фаза 10 — Фіналізація (тиждень 32-34)
 
-- [ ] Dark mode / теми
-- [ ] Локалізація (UA / EN)
-- [ ] Monitoring (Prometheus metrics, Sentry)
-- [ ] Бекап (pg_dump + rsync репозиторіїв)
-- [ ] Ansible playbook для production-деплою на Ubuntu
-- [ ] Документація для адміністратора
-- [ ] Тестування навантаження (locust — 50+ одночасних push/pull)
-- [ ] Реліз 1.0
+- [x] Dark mode / теми
+- [x] Локалізація (UA / EN)
+- [x] Monitoring (Prometheus metrics, Sentry)
+- [x] Бекап (pg_dump + rsync репозиторіїв)
+- [x] Ansible playbook для production-деплою на Ubuntu
+- [x] Документація для адміністратора
+- [x] Тестування навантаження (locust — 50+ одночасних push/pull)
+- [x] Реліз 1.0
 
 
 ## 4. Структура Django-проєкту
