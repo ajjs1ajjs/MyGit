@@ -1,3 +1,4 @@
+from pathlib import Path
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.exceptions import SuspiciousFileOperation, ValidationError
@@ -10,11 +11,12 @@ from apps.repositories.models import Repository, RepositoryAccess
 User = get_user_model()
 
 
-def make_user(username: str, email: str | None = None):
+def make_user(username: str, email: str | None = None, **extra_fields):
     return User.objects.create_user(
         email=email or f"{username}@example.com",
         username=username,
         password="StrongPass123!",
+        **extra_fields,
     )
 
 
@@ -80,7 +82,9 @@ def test_repository_disk_path_rejects_traversal(settings, tmp_path):
 
 
 @pytest.mark.django_db
-def test_repository_custom_disk_path_resolves():
+def test_repository_custom_disk_path_resolves(settings):
+    # Override to not have explicitly configured MYGIT_REPOS_ROOT
+    settings.MYGIT_REPOS_ROOT = str(settings.BASE_DIR / "repos")
     repo = Repository(
         name="my-repo",
         path="alice/my-repo",
@@ -99,12 +103,20 @@ def test_repository_clean_rejects_unsafe_name():
 
 
 @pytest.mark.django_db
-def test_browse_disk_and_create_folder(tmp_path):
-    user = make_user("testuser")
+def test_browse_disk_and_create_folder(settings, tmp_path):
+    # Use a path within the actual configured MYGIT_REPOS_ROOT
+    allowed_root = Path(getattr(settings, "MYGIT_REPOS_ROOT", settings.BASE_DIR / "repos"))
+    allowed_root.mkdir(parents=True, exist_ok=True)
+    test_path = allowed_root / "test_browse"
+    test_path.mkdir(exist_ok=True)
+    
+    user = make_user("testuser", is_superuser=True, is_staff=True)
+    print(f"DEBUG: user={user.username}, is_superuser={user.is_superuser}, pk={user.pk}")
     client = APIClient()
     client.force_authenticate(user=user)
 
-    response = client.get("/api/v1/projects/browse-disk/", {"path": str(tmp_path)})
+    response = client.get("/api/v1/projects/browse-disk/", {"path": str(test_path)})
+    print(f"DEBUG: response={response.status_code}, data={response.data}")
     assert response.status_code == 200
     data = response.json()
     assert data["current_path"] is not None
@@ -112,12 +124,12 @@ def test_browse_disk_and_create_folder(tmp_path):
 
     new_dir_name = "sub-folder"
     response = client.post("/api/v1/projects/create-disk-folder/", {
-        "parent_path": str(tmp_path),
+        "parent_path": str(test_path),
         "name": new_dir_name
     })
     assert response.status_code == 200
-    assert response.json()["path"] == str(tmp_path / new_dir_name)
-    assert (tmp_path / new_dir_name).exists()
+    assert response.json()["path"] == str(test_path / new_dir_name)
+    assert (test_path / new_dir_name).exists()
 
 
 @pytest.mark.django_db
