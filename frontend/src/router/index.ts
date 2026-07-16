@@ -29,6 +29,7 @@ const routes = [
       { path: "-/merge_requests/new", name: "repo-mr-new", component: () => import("../views/RepoMrNewPage.vue") },
       { path: "-/settings", name: "repo-settings", component: () => import("../views/RepoSettingsPage.vue") },
       { path: "-/wiki", name: "repo-wiki", component: () => import("../views/RepoWikiPage.vue") },
+      { path: "-/blame/:ref(.*)?", name: "repo-blame", component: () => import("../views/RepoBlamePage.vue") },
     ],
   },
   { path: "/groups", name: "groups", component: () => import("../views/GroupsListPage.vue") },

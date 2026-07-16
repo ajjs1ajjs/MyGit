@@ -23,15 +23,13 @@
             <button 
               @click="viewMode = 'preview'" 
               :class="viewMode === 'preview' ? 'bg-blue-600 text-white border-blue-600' : 'bg-transparent text-gray-500 hover:bg-gray-200 dark:hover:bg-slate-700'"
-              class="px-2.5 py-1 text-[10px] border-0 cursor-pointer font-sans font-medium transition-colors"
-            >
+              class="px-2.5 py-1 text-[10px] border-0 cursor-pointer font-sans font-medium transition-colors">
               Preview
             </button>
             <button 
               @click="viewMode = 'source'" 
               :class="viewMode === 'source' ? 'bg-blue-600 text-white border-blue-600' : 'bg-transparent text-gray-500 hover:bg-gray-200 dark:hover:bg-slate-700'"
-              class="px-2.5 py-1 text-[10px] border-0 cursor-pointer font-sans font-medium transition-colors"
-            >
+              class="px-2.5 py-1 text-[10px] border-0 cursor-pointer font-sans font-medium transition-colors">
               Source
             </button>
           </div>
@@ -39,6 +37,10 @@
           <RouterLink :to="getRawLink()" class="btn btn-ghost text-xs px-2 py-1 min-h-0 hover:bg-blue-100 dark:hover:bg-blue-900/30" target="_blank" rel="noopener">
             <svg class="w-3.5 h-3.5 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
             Raw
+          </RouterLink>
+          <RouterLink :to="getBlameLink()" class="btn btn-ghost text-xs px-2 py-1 min-h-0 hover:bg-orange-100 dark:hover:bg-orange-900/30">
+            <svg class="w-3.5 h-3.5 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle></svg>
+            Blame
           </RouterLink>
         </div>
       </div>
@@ -154,6 +156,12 @@ function getRawLink() {
   return `/${repoUsername}/${repoName}/-/raw/${ref}/${encodeURIComponent(filePath)}`;
 }
 
+function getBlameLink() {
+  const ref = refParam || "main";
+  return `/${repoUsername}/${repoName}/-/blame/${ref}?path=${encodeURIComponent(filePath)}`;
+}
+
+watch(repoId, async (id) => {
 function highlightedLine(line: string, index: number): string {
   if (!content.value) return "";
   try {
