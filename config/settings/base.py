@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "apps.ci_cd",
     "apps.webhooks",
     "apps.notifications",
+    "apps.administration",
     "drf_spectacular",
     "django_prometheus",
     "apps.api",

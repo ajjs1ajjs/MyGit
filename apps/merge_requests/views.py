@@ -7,7 +7,7 @@ from rest_framework.response import Response
 
 from apps.api.mixins import ensure_repo_access
 from apps.git_service.backend import GitBackend, GitServiceError
-from apps.repositories.models import Repository, RepositoryAccess
+from apps.repositories.models import ProtectedBranch, Repository, RepositoryAccess
 
 from .models import MergeRequest, MergeRequestComment, MergeRequestReview
 from .serializers import (
@@ -107,6 +107,20 @@ class MergeRequestViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        protected = _matching_protected_branch(repo, mr.target_branch)
+        if protected:
+            approvals = mr.reviews.filter(approved=True).exclude(author=mr.author).count()
+            if approvals < protected.required_approvals:
+                return Response(
+                    {
+                        "detail": (
+                            f"Protected branch requires {protected.required_approvals} "
+                            f"approval(s); got {approvals}."
+                        )
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
         try:
             backend = self._get_backend(repo)
             merge_method = request.data.get("method", "merge-commit")
@@ -192,3 +206,10 @@ class MergeRequestViewSet(viewsets.GenericViewSet):
             MergeRequestReviewSerializer(review).data,
             status=status.HTTP_201_CREATED,
         )
+
+
+def _matching_protected_branch(repo: Repository, branch: str) -> ProtectedBranch | None:
+    for rule in repo.protected_branches.all():
+        if rule.matches(branch):
+            return rule
+    return None

@@ -72,22 +72,27 @@ class Repository(BaseModel):
     def disk_path(self):
         from pathlib import Path
 
+        # Compute the default repo root at runtime from BASE_DIR
+        default_repo_root = str(settings.BASE_DIR / "repos")
+        # Get configured value (may be default from settings)
+        configured_repo_root = getattr(settings, "MYGIT_REPOS_ROOT", default_repo_root)
+        # Check if explicitly configured by comparing resolved paths
+        explicitly_configured = (
+            Path(configured_repo_root).resolve() != Path(default_repo_root).resolve()
+        )
+
         if self.custom_disk_path:
             custom = Path(self.custom_disk_path).resolve(strict=False)
-            repo_root = getattr(settings, "MYGIT_REPOS_ROOT", None)
-            if repo_root:
-                root = Path(repo_root).resolve(strict=False)
+            # Only validate custom path if MYGIT_REPOS_ROOT is explicitly configured
+            if explicitly_configured:
+                root = Path(configured_repo_root).resolve(strict=False)
                 if custom != root and not custom.is_relative_to(root):
                     raise SuspiciousFileOperation(
                         "Custom disk path escapes the configured repository root."
                     )
             return custom
 
-        if repo_root is None:
-            import os
-            repo_root = os.path.join(settings.BASE_DIR, "repos")
-
-        root = Path(repo_root).resolve(strict=False)
+        root = Path(configured_repo_root).resolve(strict=False)
         candidate = (root / f"{self.path}.git").resolve(strict=False)
         if candidate == root or not candidate.is_relative_to(root):
             raise SuspiciousFileOperation("Repository path escapes the configured repository root.")
@@ -113,3 +118,73 @@ class RepositoryAccess(BaseModel):
 
     def __str__(self):
         return f"{self.user.username} -> {self.repository.path} ({self.get_role_display()})"
+
+
+class ProtectedBranch(BaseModel):
+    repository = models.ForeignKey(
+        Repository,
+        on_delete=models.CASCADE,
+        related_name="protected_branches",
+    )
+    pattern = models.CharField(max_length=255, default="main")
+    required_approvals = models.PositiveIntegerField(default=1)
+    allow_direct_push = models.BooleanField(default=False)
+    allow_force_push = models.BooleanField(default=False)
+    allow_delete = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = "repositories_protected_branch"
+        unique_together = [("repository", "pattern")]
+        ordering = ["pattern"]
+
+    def __str__(self):
+        return f"{self.repository.path}:{self.pattern}"
+
+    def matches(self, branch: str) -> bool:
+        import fnmatch
+
+        return fnmatch.fnmatchcase(branch, self.pattern)
+
+
+class CodeOwnerRule(BaseModel):
+    repository = models.ForeignKey(
+        Repository,
+        on_delete=models.CASCADE,
+        related_name="codeowner_rules",
+    )
+    pattern = models.CharField(max_length=512)
+    owners = models.ManyToManyField("accounts.User", blank=True, related_name="owned_code_rules")
+    raw_owners = models.CharField(max_length=1024, blank=True)
+
+    class Meta:
+        db_table = "repositories_codeowner_rule"
+        ordering = ["pattern"]
+
+    def __str__(self):
+        return f"{self.repository.path}: {self.pattern}"
+
+
+class Release(BaseModel):
+    repository = models.ForeignKey(Repository, on_delete=models.CASCADE, related_name="releases")
+    tag_name = models.CharField(max_length=255)
+    title = models.CharField(max_length=512)
+    notes = models.TextField(blank=True)
+    changelog = models.TextField(blank=True)
+    is_prerelease = models.BooleanField(default=False)
+    is_signed = models.BooleanField(default=False)
+    signature = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_releases",
+    )
+
+    class Meta:
+        db_table = "repositories_release"
+        unique_together = [("repository", "tag_name")]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.repository.path}@{self.tag_name}"

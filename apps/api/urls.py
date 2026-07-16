@@ -6,6 +6,14 @@ from apps.issues.views import IssueViewSet
 from apps.merge_requests.views import MergeRequestViewSet
 from apps.notifications.views import NotificationViewSet
 from apps.organizations.views import GroupViewSet
+from apps.administration.views import (
+    AuditEventViewSet,
+    BackupJobViewSet,
+    BackupScheduleViewSet,
+    MirrorTargetViewSet,
+    RepositoryImportJobViewSet,
+    TwoFactorDeviceViewSet,
+)
 from apps.search.views import global_search
 from apps.snippets.views import SnippetViewSet
 from apps.webhooks.views import WebhookViewSet
@@ -33,6 +41,12 @@ router.register(
     basename="webhooks",
 )
 router.register(r"notifications", NotificationViewSet, basename="notifications")
+router.register(r"admin/audit-events", AuditEventViewSet, basename="audit-events")
+router.register(r"admin/backup-schedules", BackupScheduleViewSet, basename="backup-schedules")
+router.register(r"admin/backup-jobs", BackupJobViewSet, basename="backup-jobs")
+router.register(r"admin/mirror-targets", MirrorTargetViewSet, basename="mirror-targets")
+router.register(r"repository-import-jobs", RepositoryImportJobViewSet, basename="repository-import-jobs")
+router.register(r"two-factor-devices", TwoFactorDeviceViewSet, basename="two-factor-devices")
 router.register(r"groups", GroupViewSet, basename="groups")
 router.register(r"snippets", SnippetViewSet, basename="snippets")
 router.register(

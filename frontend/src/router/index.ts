@@ -35,6 +35,7 @@ const routes = [
   { path: "/groups/:id", name: "group-detail", component: () => import("../views/GroupDetailPage.vue") },
   { path: "/search", name: "search", component: () => import("../views/SearchPage.vue") },
   { path: "/manage/users", name: "admin-users", component: () => import("../views/AdminUsersPage.vue") },
+  { path: "/manage/system", name: "admin-system", component: () => import("../views/AdminSystemPage.vue") },
 ];
 
 const router = createRouter({ history: createWebHistory(), routes });

@@ -23,6 +23,10 @@
           <svg class="w-4 h-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
           Users
         </RouterLink>
+        <RouterLink v-if="auth.user?.is_superuser" to="/manage/system" class="nav-item" active-class="active">
+          <svg class="w-4 h-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.88l.06.06a2 2 0 01-2.83 2.83l-.06-.06A1.7 1.7 0 0015 19.4a1.7 1.7 0 00-1 .6 1.7 1.7 0 00-.4 1.1V21a2 2 0 01-4 0v-.09A1.7 1.7 0 008.6 19.4a1.7 1.7 0 00-1.88.34l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.7 1.7 0 004.6 15a1.7 1.7 0 00-.6-1 1.7 1.7 0 00-1.1-.4H3a2 2 0 010-4h.09A1.7 1.7 0 004.6 8.6a1.7 1.7 0 00-.34-1.88l-.06-.06a2 2 0 012.83-2.83l.06.06A1.7 1.7 0 009 4.6a1.7 1.7 0 001-.6 1.7 1.7 0 00.4-1.1V3a2 2 0 014 0v.09A1.7 1.7 0 0015.4 4.6a1.7 1.7 0 001.88-.34l.06-.06a2 2 0 012.83 2.83l-.06.06A1.7 1.7 0 0019.4 9c.36.22.72.44 1 .6.33.18.7.28 1.1.28H21a2 2 0 010 4h-.09A1.7 1.7 0 0019.4 15z"/></svg>
+          System
+        </RouterLink>
         <div class="section">Projects</div>
         <template v-if="repos.length">
           <RouterLink v-for="r in repos" :key="r.id" :to="`/${r.path}`" class="nav-item truncate" active-class="active">
@@ -66,4 +70,3 @@ const router = useRouter(); const auth = useAuthStore(); const q = ref(""); cons
 function search(){ if(q.value.trim()) router.push(`/search?q=${encodeURIComponent(q.value.trim())}`) }
 onMounted(async ()=>{ if(auth.token){ auth.fetchMe(); try{ repos.value=((await api.get("/projects/"))||[]).slice(0,20) }catch{} } });
 </script>
-

@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Repository, RepositoryAccess
+from .models import CodeOwnerRule, ProtectedBranch, Release, Repository, RepositoryAccess
 
 
 @admin.register(Repository)
@@ -24,3 +24,8 @@ class RepositoryAccessAdmin(admin.ModelAdmin):
     list_display = ("user", "repository", "role", "created_at")
     list_filter = ("role",)
     search_fields = ("user__username", "repository__path")
+
+
+admin.site.register(ProtectedBranch)
+admin.site.register(CodeOwnerRule)
+admin.site.register(Release)

@@ -9,7 +9,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.accounts.models import SSHKey
-from apps.repositories.models import Repository, RepositoryAccess
+from apps.repositories.models import ProtectedBranch, Repository, RepositoryAccess
 
 logger = logging.getLogger("mygit")
 User = get_user_model()
@@ -128,6 +128,20 @@ def pre_receive(request):
             msg = f"ERROR: Cannot delete the default branch '{branch}'."
             return JsonResponse({"detail": msg}, status=403)
 
+        protected = _matching_protected_branch(repo, branch)
+        if protected:
+            is_delete = new_rev == "0" * 40
+            is_force_push = old_rev != "0" * 40 and new_rev != "0" * 40
+            if is_delete and not protected.allow_delete:
+                return JsonResponse({"detail": "ERROR: Protected branch cannot be deleted."}, status=403)
+            if is_force_push and not protected.allow_force_push:
+                return JsonResponse({"detail": "ERROR: Force push is disabled for this branch."}, status=403)
+            if not protected.allow_direct_push:
+                return JsonResponse(
+                    {"detail": "ERROR: Direct push is disabled for this protected branch."},
+                    status=403,
+                )
+
     logger.info(
         "pre-receive: repo=%s ref=%s old=%s new=%s",
         repo_path,
@@ -174,3 +188,10 @@ def post_receive(request):
         new_rev[:8],
     )
     return JsonResponse({"detail": "OK"})
+
+
+def _matching_protected_branch(repo: Repository, branch: str) -> ProtectedBranch | None:
+    for rule in repo.protected_branches.all():
+        if rule.matches(branch):
+            return rule
+    return None

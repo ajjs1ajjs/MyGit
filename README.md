@@ -85,6 +85,24 @@ sudo DOMAIN=git.company.com PORT=443 bash <(curl -sSL https://raw.githubusercont
 curl -sSL https://raw.githubusercontent.com/ajjs1ajjs/MyGit/master/update.sh | sudo bash
 ```
 
+### Бекап і відновлення
+
+```bash
+# Локальний бекап
+scripts/mygit-backup create --output /opt/mygit/backups
+
+# Локальний + хмарний бекап, якщо налаштовано MYGIT_BACKUP_CLOUD_*
+scripts/mygit-backup create --encrypt --upload
+
+# Відновлення
+scripts/mygit-backup restore /opt/mygit/backups/mygit-backup-YYYYMMDD-HHMMSS.tar.gz
+
+# Перевірка безпечного тестового відновлення
+scripts/mygit-backup test-restore /opt/mygit/backups/mygit-backup-YYYYMMDD-HHMMSS.tar.gz
+```
+
+Підтримуються SQLite/PostgreSQL, репозиторії, media-файли, `.env`, перевірка SHA256, AES-256-GCM шифрування, тестове відновлення, реплікація репозиторіїв і хмарна синхронізація через `rclone` або S3-compatible storage. Деталі: [BACKUP.md](BACKUP.md).
+
 ### Docker
 
 ```bash

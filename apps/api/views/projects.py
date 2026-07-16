@@ -12,6 +12,9 @@ from rest_framework.response import Response
 from apps.api.mixins import ensure_repo_access
 from apps.git_service.backend import GitBackend, GitServiceError
 from apps.repositories.models import (
+    CodeOwnerRule,
+    ProtectedBranch,
+    Release,
     Repository,
     RepositoryAccess,
     validate_repository_component,
@@ -62,8 +65,12 @@ class RepositorySerializer(serializers.ModelSerializer):
 
         if owner_type == "organization":
             from apps.organizations.models import Group, GroupMember
+
             group = get_object_or_404(Group, id=owner_id)
-            if not request.user.is_superuser and not GroupMember.objects.filter(group=group, user=request.user).exists():
+            if (
+                not request.user.is_superuser
+                and not GroupMember.objects.filter(group=group, user=request.user).exists()
+            ):
                 raise serializers.ValidationError("You do not have access to this group.")
             owner_path = group.path
         else:
@@ -92,6 +99,54 @@ class RepositorySerializer(serializers.ModelSerializer):
             return validate_repository_component(value)
         except Exception as e:
             raise serializers.ValidationError(str(e)) from e
+
+
+class ProtectedBranchSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProtectedBranch
+        fields = "__all__"
+        read_only_fields = ["id", "repository", "created_at", "updated_at"]
+
+
+class CodeOwnerRuleSerializer(serializers.ModelSerializer):
+    owner_usernames = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CodeOwnerRule
+        fields = [
+            "id",
+            "repository",
+            "pattern",
+            "owners",
+            "owner_usernames",
+            "raw_owners",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "repository", "owner_usernames", "created_at", "updated_at"]
+
+    def get_owner_usernames(self, obj):
+        return list(obj.owners.values_list("username", flat=True))
+
+
+class ReleaseSerializer(serializers.ModelSerializer):
+    created_by_username = serializers.CharField(
+        source="created_by.username", read_only=True, allow_null=True
+    )
+
+    class Meta:
+        model = Release
+        fields = "__all__"
+        read_only_fields = [
+            "id",
+            "repository",
+            "changelog",
+            "is_signed",
+            "signature",
+            "created_by",
+            "created_at",
+            "updated_at",
+        ]
 
 
 class ProjectViewSet(viewsets.ModelViewSet):
@@ -269,6 +324,9 @@ class ProjectViewSet(viewsets.ModelViewSet):
     def delete_branch(self, request, id=None, name=None):
         repo = self.get_object()
         self._ensure_repo_role(repo, RepositoryAccess.Role.DEVELOPER)
+        protected = _matching_protected_branch(repo, name)
+        if protected and not protected.allow_delete:
+            return Response({"detail": "This branch is protected from deletion."}, status=403)
         try:
             backend = self._get_backend(repo)
             backend.delete_branch(name)
@@ -304,6 +362,59 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 return Response({"detail": str(e)}, status=400)
 
         return Response({"detail": "Method not allowed."}, status=405)
+
+    @action(methods=["get", "post"], detail=True, url_path="protected-branches")
+    def protected_branches(self, request, id=None):
+        repo = self.get_object()
+        if request.method == "GET":
+            rules = repo.protected_branches.all()
+            return Response(ProtectedBranchSerializer(rules, many=True).data)
+        self._ensure_repo_role(repo, RepositoryAccess.Role.MAINTAINER)
+        serializer = ProtectedBranchSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        rule = serializer.save(repository=repo)
+        return Response(ProtectedBranchSerializer(rule).data, status=status.HTTP_201_CREATED)
+
+    @action(
+        methods=["patch", "delete"], detail=True, url_path="protected-branches/(?P<rule_id>[^/]+)"
+    )
+    def protected_branch_detail(self, request, id=None, rule_id=None):
+        repo = self.get_object()
+        self._ensure_repo_role(repo, RepositoryAccess.Role.MAINTAINER)
+        rule = get_object_or_404(ProtectedBranch, repository=repo, id=rule_id)
+        if request.method == "DELETE":
+            rule.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        serializer = ProtectedBranchSerializer(rule, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(ProtectedBranchSerializer(rule).data)
+
+    @action(methods=["get", "post"], detail=True, url_path="codeowners")
+    def codeowners(self, request, id=None):
+        repo = self.get_object()
+        if request.method == "GET":
+            rules = repo.codeowner_rules.prefetch_related("owners")
+            return Response(CodeOwnerRuleSerializer(rules, many=True).data)
+        self._ensure_repo_role(repo, RepositoryAccess.Role.MAINTAINER)
+        serializer = CodeOwnerRuleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        rule = serializer.save(repository=repo)
+        return Response(CodeOwnerRuleSerializer(rule).data, status=status.HTTP_201_CREATED)
+
+    @action(methods=["get", "post"], detail=True, url_path="releases")
+    def releases(self, request, id=None):
+        repo = self.get_object()
+        if request.method == "GET":
+            releases = repo.releases.select_related("created_by")
+            return Response(ReleaseSerializer(releases, many=True).data)
+        self._ensure_repo_role(repo, RepositoryAccess.Role.MAINTAINER)
+        serializer = ReleaseSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        changelog = _generate_changelog(repo, data["tag_name"])
+        release = serializer.save(repository=repo, created_by=request.user, changelog=changelog)
+        return Response(ReleaseSerializer(release).data, status=status.HTTP_201_CREATED)
 
     @action(methods=["delete"], detail=True, url_path="tags/(?P<name>[^/]+)")
     def delete_tag(self, request, id=None, name=None):
@@ -350,9 +461,13 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
         token = request.query_params.get("token")
         if not token:
-            integration_token = IntegrationToken.objects.filter(user=request.user, provider="github").first()
+            integration_token = IntegrationToken.objects.filter(
+                user=request.user, provider="github"
+            ).first()
             if not integration_token:
-                return Response({"detail": "GitHub token not configured."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"detail": "GitHub token not configured."}, status=status.HTTP_400_BAD_REQUEST
+                )
             token = integration_token.get_token()
 
         headers = {
@@ -360,21 +475,29 @@ class ProjectViewSet(viewsets.ModelViewSet):
             "Accept": "application/vnd.github+json",
         }
         try:
-            resp = requests.get("https://api.github.com/user/repos?per_page=100&sort=updated", headers=headers, timeout=10)
+            resp = requests.get(
+                "https://api.github.com/user/repos?per_page=100&sort=updated",
+                headers=headers,
+                timeout=10,
+            )
             if not resp.ok:
-                logger.error("GitHub API error for user %s: %s", request.user.username, resp.text[:200])
+                logger.error(
+                    "GitHub API error for user %s: %s", request.user.username, resp.text[:200]
+                )
                 return Response({"detail": "Failed to fetch repositories from GitHub."}, status=502)
 
             repos = []
             for item in resp.json():
-                repos.append({
-                    "name": item["name"],
-                    "full_name": item["full_name"],
-                    "description": item.get("description") or "",
-                    "private": item["private"],
-                    "clone_url": item["clone_url"],
-                    "default_branch": item.get("default_branch") or "main",
-                })
+                repos.append(
+                    {
+                        "name": item["name"],
+                        "full_name": item["full_name"],
+                        "description": item.get("description") or "",
+                        "private": item["private"],
+                        "clone_url": item["clone_url"],
+                        "default_branch": item.get("default_branch") or "main",
+                    }
+                )
             return Response(repos)
         except Exception as e:
             return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -386,30 +509,42 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
         token = request.query_params.get("token")
         if not token:
-            integration_token = IntegrationToken.objects.filter(user=request.user, provider="gitlab").first()
+            integration_token = IntegrationToken.objects.filter(
+                user=request.user, provider="gitlab"
+            ).first()
             if not integration_token:
-                return Response({"detail": "GitLab token not configured."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"detail": "GitLab token not configured."}, status=status.HTTP_400_BAD_REQUEST
+                )
             token = integration_token.get_token()
 
         headers = {
             "PRIVATE-TOKEN": token,
         }
         try:
-            resp = requests.get("https://gitlab.com/api/v4/projects?membership=true&simple=true&per_page=100&order_by=updated_at", headers=headers, timeout=10)
+            resp = requests.get(
+                "https://gitlab.com/api/v4/projects?membership=true&simple=true&per_page=100&order_by=updated_at",
+                headers=headers,
+                timeout=10,
+            )
             if not resp.ok:
-                logger.error("GitLab API error for user %s: %s", request.user.username, resp.text[:200])
+                logger.error(
+                    "GitLab API error for user %s: %s", request.user.username, resp.text[:200]
+                )
                 return Response({"detail": "Failed to fetch repositories from GitLab."}, status=502)
 
             repos = []
             for item in resp.json():
-                repos.append({
-                    "name": item["name"],
-                    "full_name": item["path_with_namespace"],
-                    "description": item.get("description") or "",
-                    "private": item["visibility"] == "private",
-                    "clone_url": item["http_url_to_repo"],
-                    "default_branch": item.get("default_branch") or "main",
-                })
+                repos.append(
+                    {
+                        "name": item["name"],
+                        "full_name": item["path_with_namespace"],
+                        "description": item.get("description") or "",
+                        "private": item["visibility"] == "private",
+                        "clone_url": item["http_url_to_repo"],
+                        "default_branch": item.get("default_branch") or "main",
+                    }
+                )
             return Response(repos)
         except Exception as e:
             return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -431,7 +566,9 @@ class ProjectViewSet(viewsets.ModelViewSet):
         token = request.data.get("token")
 
         if not name:
-            return Response({"detail": "Project name is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Project name is required."}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         try:
             validate_repository_component(name)
@@ -443,9 +580,16 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
         if owner_type == "organization" and owner_id:
             from apps.organizations.models import Group, GroupMember
+
             group = get_object_or_404(Group, id=owner_id)
-            if not request.user.is_superuser and not GroupMember.objects.filter(group=group, user=request.user).exists():
-                return Response({"detail": "You do not have access to this group."}, status=status.HTTP_403_FORBIDDEN)
+            if (
+                not request.user.is_superuser
+                and not GroupMember.objects.filter(group=group, user=request.user).exists()
+            ):
+                return Response(
+                    {"detail": "You do not have access to this group."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             owner_path = group.path
         else:
             owner_type = "user"
@@ -454,30 +598,43 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
         path = f"{owner_path}/{name}"
         if Repository.objects.filter(path=path).exists():
-            return Response({"detail": "Repository already exists."}, status=status.HTTP_409_CONFLICT)
+            return Response(
+                {"detail": "Repository already exists."}, status=status.HTTP_409_CONFLICT
+            )
 
         if provider in ["github", "gitlab"] and not token:
-            integration_token = IntegrationToken.objects.filter(user=request.user, provider=provider).first()
+            integration_token = IntegrationToken.objects.filter(
+                user=request.user, provider=provider
+            ).first()
             if integration_token:
                 token = integration_token.get_token()
 
         if provider == "github":
             if not repo_name:
-                return Response({"detail": "repo_name is required for github provider."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"detail": "repo_name is required for github provider."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             if token:
                 actual_clone_url = f"https://{token}@github.com/{repo_name}.git"
             else:
                 actual_clone_url = f"https://github.com/{repo_name}.git"
         elif provider == "gitlab":
             if not repo_name:
-                return Response({"detail": "repo_name is required for gitlab provider."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"detail": "repo_name is required for gitlab provider."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             if token:
                 actual_clone_url = f"https://oauth2:{token}@gitlab.com/{repo_name}.git"
             else:
                 actual_clone_url = f"https://gitlab.com/{repo_name}.git"
         elif provider == "custom":
             if not clone_url:
-                return Response({"detail": "clone_url is required for custom provider."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"detail": "clone_url is required for custom provider."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             actual_clone_url = clone_url
         else:
             return Response({"detail": "Invalid provider."}, status=status.HTTP_400_BAD_REQUEST)
@@ -520,12 +677,17 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 err_msg = res.stderr
                 if token:
                     err_msg = err_msg.replace(token, "********")
-                return Response({"detail": f"Clone failed: {err_msg}"}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"detail": f"Clone failed: {err_msg}"}, status=status.HTTP_400_BAD_REQUEST
+                )
         except subprocess.TimeoutExpired:
             if disk_path.exists():
                 shutil.rmtree(disk_path)
             repo.delete()
-            return Response({"detail": "Clone timed out after 90 seconds."}, status=status.HTTP_408_REQUEST_TIMEOUT)
+            return Response(
+                {"detail": "Clone timed out after 90 seconds."},
+                status=status.HTTP_408_REQUEST_TIMEOUT,
+            )
         except Exception as e:
             if disk_path.exists():
                 shutil.rmtree(disk_path)
@@ -574,6 +736,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 if not target_path:
                     import string
                     import ctypes
+
                     bitmask = ctypes.windll.kernel32.GetLogicalDrives()
                     for letter in string.ascii_uppercase:
                         if bitmask & 1:
@@ -616,11 +779,13 @@ class ProjectViewSet(viewsets.ModelViewSet):
                         pass
                 directories.sort(key=str.lower)
 
-            return Response({
-                "current_path": current_path,
-                "parent_path": parent_path,
-                "directories": directories
-            })
+            return Response(
+                {
+                    "current_path": current_path,
+                    "parent_path": parent_path,
+                    "directories": directories,
+                }
+            )
         except Exception as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -632,10 +797,13 @@ class ProjectViewSet(viewsets.ModelViewSet):
         parent_path = request.data.get("parent_path")
         name = request.data.get("name")
         if not parent_path or not name:
-            return Response({"detail": "parent_path and name are required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "parent_path and name are required."}, status=status.HTTP_400_BAD_REQUEST
+            )
 
         from pathlib import Path
         import os
+
         allowed_root = os.path.realpath(getattr(settings, "MYGIT_REPOS_ROOT", ""))
         try:
             target = (Path(parent_path) / name).resolve(strict=False)
@@ -645,3 +813,22 @@ class ProjectViewSet(viewsets.ModelViewSet):
             return Response({"path": str(target)})
         except Exception as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+def _matching_protected_branch(repo: Repository, branch: str) -> ProtectedBranch | None:
+    for rule in repo.protected_branches.all():
+        if rule.matches(branch):
+            return rule
+    return None
+
+
+def _generate_changelog(repo: Repository, tag_name: str) -> str:
+    try:
+        backend = GitBackend(repo.disk_path)
+        commits = backend.get_commits(repo.default_branch, page=1, per_page=50)
+    except Exception:
+        return ""
+    lines = [f"Changes for {tag_name}", ""]
+    for commit in commits:
+        lines.append(f"- {commit['short_sha']} {commit['message'].splitlines()[0]}")
+    return "\n".join(lines)
