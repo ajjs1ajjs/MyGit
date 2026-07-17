@@ -2,9 +2,6 @@
 
 Default local login after a fresh install:
 
-- Username: `admin`
-- Password: `291263`
-
 Change this password immediately after the first login. The admin account is marked with
 `must_change_password=True`.
 
