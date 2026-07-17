@@ -86,7 +86,12 @@ class GitBackend:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        stdout, stderr = proc.communicate(input=input_stream)
+        try:
+            stdout, stderr = proc.communicate(input=input_stream, timeout=120)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            raise GitServiceError("Git process timed out.")
 
         if proc.returncode != 0:
             raise GitServiceError(stderr.decode(errors="replace"))
@@ -358,24 +363,46 @@ class GitBackend:
 
         def generate():
             proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, cwd=str(self.repo_path))
-            while True:
-                chunk = proc.stdout.read(65536)
-                if not chunk:
-                    break
-                yield chunk
-            proc.stdout.close()
-            proc.wait()
-            if proc.returncode != 0:
-                raise GitServiceError(proc.stderr.read().decode(errors="replace"))
+            stderr_data = b""
+            try:
+                while True:
+                    chunk = proc.stdout.read(65536)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                stderr_data = proc.stderr.read()
+                proc.stdout.close()
+                proc.stderr.close()
+                proc.wait()
+                if proc.returncode != 0:
+                    raise GitServiceError(stderr_data.decode(errors="replace"))
 
         return generate()
 
     @staticmethod
     def get_repo_size_kb(repo_path: Path) -> int:
+        import subprocess as sp
+
+        try:
+            result = sp.run(
+                [GIT_BINARY, "-C", str(repo_path), "count-objects", "-v"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            for line in result.stdout.splitlines():
+                if "size-pack" in line:
+                    return int(line.split(":")[1].strip()) * 1024  # convert MiB to KiB
+        except Exception:
+            pass
+
         total_size = 0
         for dirpath, _, filenames in os.walk(repo_path):
             for f in filenames:
                 fp = os.path.join(dirpath, f)
-                if os.path.exists(fp):
+                try:
                     total_size += os.path.getsize(fp)
+                except OSError:
+                    pass
         return total_size // 1024

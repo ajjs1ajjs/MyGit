@@ -6,6 +6,8 @@ class CiConfigError(Exception):
 
 
 def parse_ci_config(content: str) -> dict:
+    if len(content) > 100_000:  # 100 KB limit to prevent YAML bomb attacks
+        raise CiConfigError("Config file too large (max 100 KB).")
     try:
         config = yaml.safe_load(content)
     except yaml.YAMLError as e:

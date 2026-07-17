@@ -11,6 +11,11 @@ logger = logging.getLogger("mygit")
 
 class JobLogConsumer(AsyncWebsocketConsumer):
     async def connect(self):
+        user = self.scope.get("user")
+        if not user or not user.is_authenticated:
+            await self.close()
+            return
+
         self.project_id = self.scope["url_route"]["kwargs"]["project_id"]
         self.pipeline_id = self.scope["url_route"]["kwargs"]["pipeline_id"]
         self.job_id = self.scope["url_route"]["kwargs"]["job_id"]

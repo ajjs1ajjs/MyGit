@@ -57,6 +57,7 @@ class SSHKey(BaseModel):
     title = models.CharField(max_length=255)
     public_key = models.TextField(unique=True)
     fingerprint = models.CharField(max_length=64, unique=True, editable=False)
+    is_active = models.BooleanField(default=True)
 
     class Meta:
         db_table = "accounts_sshkey"
@@ -150,7 +151,15 @@ class IntegrationToken(BaseModel):
         self.token = self._get_fernet().encrypt(raw.encode()).decode()
 
     def save(self, *args, **kwargs):
-        if self.pk and self.token and not self.token.startswith("gAAAAA"):
-            self.set_token(self.token)
-        super().save(*args, **kwargs)
+        is_new = self.pk is None
+        raw_token = None
+        if is_new and self.token and not self.token.startswith("gAAAAA"):
+            raw_token = self.token
+            super().save(*args, **kwargs)
+            self.token = self._get_fernet().encrypt(raw_token.encode()).decode()
+            self.save(update_fields=["token"])
+        else:
+            if self.pk and self.token and not self.token.startswith("gAAAAA"):
+                self.set_token(self.token)
+            super().save(*args, **kwargs)
 

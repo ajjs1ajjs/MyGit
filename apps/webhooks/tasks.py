@@ -50,6 +50,16 @@ def deliver_webhook(self, delivery_id: str):
         delivery.retry_count += 1
         delivery.response_body = str(e)[:4096]
         delivery.status = WebhookDelivery.Status.FAILED
+        delivery.delivered_at = timezone.now()
+        delivery.save(
+            update_fields=[
+                "status",
+                "response_code",
+                "response_body",
+                "retry_count",
+                "delivered_at",
+            ]
+        )
         raise
 
     delivery.delivered_at = timezone.now()

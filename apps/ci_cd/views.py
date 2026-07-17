@@ -48,13 +48,18 @@ def _update_pipeline_status(pipeline):
         pipeline.status = Pipeline.Status.FAILED
     elif any(j.status == Job.Status.CANCELED for j in jobs):
         pipeline.status = Pipeline.Status.CANCELED
-    elif all(
-        j.status in (Job.Status.SUCCESS, Job.Status.FAILED, Job.Status.CANCELED) for j in jobs
-    ):
-        pipeline.status = Pipeline.Status.SUCCESS
     else:
         pipeline.status = Pipeline.Status.RUNNING
-    pipeline.finished_at = timezone.now()
+
+    if pipeline.status in (
+        Pipeline.Status.SUCCESS,
+        Pipeline.Status.FAILED,
+        Pipeline.Status.CANCELED,
+    ):
+        pipeline.finished_at = timezone.now()
+    else:
+        pipeline.finished_at = None
+
     pipeline.save(update_fields=["status", "finished_at"])
 
 
@@ -200,7 +205,12 @@ class JobViewSet(viewsets.GenericViewSet):
         serializer.is_valid(raise_exception=True)
 
         if "log" in serializer.validated_data:
-            job.log += serializer.validated_data["log"]
+            MAX_LOG_SIZE = 10 * 1024 * 1024  # 10 MB
+            new_log = serializer.validated_data["log"]
+            if len(job.log) + len(new_log) > MAX_LOG_SIZE:
+                job.log = job.log[-MAX_LOG_SIZE:] + "\n... (truncated) ...\n" + new_log
+            else:
+                job.log += new_log
         if "status" in serializer.validated_data:
             new_status = serializer.validated_data["status"]
             job.status = new_status
@@ -245,27 +255,36 @@ class JobViewSet(viewsets.GenericViewSet):
             return Response({"detail": "file and name are required."}, status=status.HTTP_400_BAD_REQUEST)
 
         import os
+
+        sanitized_name = os.path.basename(name)
+        if not sanitized_name:
+            return Response({"detail": "Invalid file name."}, status=status.HTTP_400_BAD_REQUEST)
+
         artifacts_dir = settings.BASE_DIR / "artifacts" / str(job.pipeline.repository_id) / str(pipeline_id) / str(job.id)
         artifacts_dir.mkdir(parents=True, exist_ok=True)
 
-        file_path = artifacts_dir / name
+        file_path = artifacts_dir / sanitized_name
         with open(file_path, "wb+") as f:
             for chunk in file.chunks():
                 f.write(chunk)
 
         current = job.artifacts or []
-        if name not in current:
-            current.append(name)
+        if sanitized_name not in current:
+            current.append(sanitized_name)
         job.artifacts = current
         job.save(update_fields=["artifacts"])
 
-        return Response({"detail": "OK", "name": name, "size": file.size})
+        return Response({"detail": "OK", "name": sanitized_name, "size": file.size})
 
     @action(methods=["get"], detail=True, url_path="artifacts/(?P<artifact_name>.+)")
     def download_artifact(self, request, project_id=None, pipeline_id=None, id=None, artifact_name=None):
         job = get_object_or_404(self.get_queryset(), id=id)
+        import os
+        sanitized_name = os.path.basename(artifact_name)
+        if not sanitized_name:
+            return Response({"detail": "Invalid file name."}, status=status.HTTP_400_BAD_REQUEST)
         artifacts_dir = settings.BASE_DIR / "artifacts" / str(job.pipeline.repository_id) / str(pipeline_id) / str(job.id)
-        file_path = artifacts_dir / artifact_name
+        file_path = artifacts_dir / sanitized_name
         if not file_path.exists():
             return Response({"detail": "Artifact not found."}, status=status.HTTP_404_NOT_FOUND)
 

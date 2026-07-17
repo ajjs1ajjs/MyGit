@@ -64,7 +64,7 @@ def check_access(request):
         return JsonResponse({"detail": "Invalid action."}, status=400)
 
     try:
-        key = SSHKey.objects.get(id=key_id)
+        key = SSHKey.objects.get(id=key_id, is_active=True)
     except (SSHKey.DoesNotExist, ValueError):
         return JsonResponse({"detail": "Invalid key."}, status=403)
 
