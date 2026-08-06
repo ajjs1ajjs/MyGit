@@ -1,0 +1,78 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"github.com/ajjs1ajjs/MyGit/internal/api"
+	"github.com/ajjs1ajjs/MyGit/internal/auth"
+	"github.com/ajjs1ajjs/MyGit/internal/config"
+	"github.com/ajjs1ajjs/MyGit/internal/git"
+	"github.com/ajjs1ajjs/MyGit/internal/storage"
+)
+
+const Version = "3.0.0"
+
+func main() {
+	port := flag.Int("port", 0, "listen port")
+	flag.Parse()
+
+	cfg := config.Default()
+	if *port != 0 {
+		cfg.Port = *port
+	}
+	if err := os.MkdirAll(cfg.RepoRoot, 0o755); err != nil {
+		log.Fatalf("repo root: %v", err)
+	}
+	if _, err := cfg.EnsureJWTSecret(); err != nil {
+		log.Fatalf("jwt secret: %v", err)
+	}
+	if _, err := cfg.EnsureInternalToken(); err != nil {
+		log.Fatalf("internal token: %v", err)
+	}
+
+	db, abs, err := storage.Open(cfg.DBPath)
+	if err != nil {
+		log.Fatalf("open db: %v", err)
+	}
+	store := storage.NewStore(db, abs)
+
+	authn := auth.New(cfg.JWTSecret, cfg.JWTExpireMin, cfg.RefreshExpireDays)
+	gitBackend := git.New(cfg.GitBinary, cfg.RepoRoot)
+
+	app := &api.App{Cfg: cfg, Store: store, Auth: authn, Git: gitBackend, Start: time.Now()}
+
+	// dual-stack bind (a lesson from the other ports).
+	var addr string
+	if cfg.Host == "" || cfg.Host == "0.0.0.0" {
+		addr = fmt.Sprintf(":%d", cfg.Port)
+	} else {
+		addr = fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	}
+	srv := &http.Server{Addr: addr, Handler: app.Handler()}
+
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+		<-sig
+		log.Println("shutting down...")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	log.Printf("MyGit %s listening on http://%s (repos: %s)", Version, addr, cfg.RepoRoot)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("server: %v", err)
+	}
+}
+
+var _ = filepath.Join

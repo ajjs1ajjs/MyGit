@@ -1,0 +1,1 @@
+import{v as f,p,k as e}from"./index-_BygewQj.js";function v(c,l){const s=e(null),r=e(""),o=e(!0),t=e("");async function u(){o.value=!0;try{const a=`${c}/${l}`,n=await p.get(`/projects/by-path/${a}/`);n?(s.value=n,r.value=n.id):t.value="Repository not found"}catch(a){t.value=a.message}finally{o.value=!1}}return f(u),{repo:s,repoId:r,loading:o,error:t,refresh:u}}export{v as u};

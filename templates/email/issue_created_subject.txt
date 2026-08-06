@@ -1,1 +1,0 @@
-[MyGit] Issue #{{ issue_number }}: {{ issue_title }}

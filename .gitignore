@@ -1,45 +1,31 @@
-__pycache__/
-*.py[cod]
-*.pyo
-*.swp
-*.swo
-*~
+# Go
+/bin/
+/dist/
+/mygit
+/mygit.exe
+*.test
+*.out
+
+# Frontend build / deps
+frontend/node_modules/
+frontend/dist/
+
+# Database / repos
+*.db
+*.sqlite
+repos/
+
+# Secrets
+.mygit_jwt_secret
+
+# OS
 .DS_Store
+Thumbs.db
 
-.env
-.env.local
-.env.production
-
-*.sqlite3
-db.sqlite3
-
-/static/
-/media/
-/repos/
-
-*.log
-/logs/
-
-.venv/
-venv/
-env/
-
+# IDE
 .vscode/
 .idea/
 
-*.egg-info/
-dist/
-build/
-
-node_modules/
-frontend/dist/
-frontend/src/**/*.js
-frontend/tsconfig.tsbuildinfo
-
-.coverage
-htmlcov/
-.pytest_cache/
-
-docker-compose.override.yml
-*.retry
-/temp/
+# Logs
+*.log
+logs/

@@ -1,231 +1,76 @@
-# MyGit
+# 🐙 MyGit
 
-Default local login after a fresh install:
+**Self-hosted Git platform** — альтернатива GitLab/Gitea, переписана на Go.
 
-Change this password immediately after the first login. The admin account is marked with
-`must_change_password=True`.
-
-### LDAP / Active Directory Login (Вхід через домен)
-- **Увімкнення**: LDAP-вхід потрібно явно ввімкнути змінною `MYGIT_LDAP_ENABLED=True` у `.env`. Без цього доменна авторизація вимкнена (і сервер не сканує мережу на кожен невдалий логін).
-- **Автовизначення (Auto-discovery)**: Якщо LDAP увімкнено, але параметри сервера не задані, система автоматично знайде контролер домену, налаштує базу пошуку та дозволить увійти під доменними обліковими даними.
-- **Ручне налаштування**: можна явно вказати параметри підключення в `.env` за допомогою змінних `MYGIT_LDAP_*`.
-- **Автореєстрація**: При першому успішному доменному вході користувач автоматично реєструється в системі, після чого адміністратор може дати йому доступ до проектів та груп.
-
-### SSH-доступ
-- Скрипти читають внутрішній токен із змінної `MYGIT_INTERNAL_API_TOKEN` (або `MYGIT_API_TOKEN`), а якщо її немає — з файлу `/opt/mygit/.ssh-token` (створюється `setup.sh`).
-- Користувачі, які працюють через SSH, мають бути членами групи `mygit`:
-  ```bash
-  usermod -aG mygit <username>
-  ```
-- `update.sh` автоматично встановлює нові залежності frontend та застосовує міграції.
-
-### CI Runner
-Запуск воркера:
-```bash
-MYGIT_INTERNAL_API_TOKEN=<токен з .env> scripts/mygit-runner --runner-id worker1
-```
-Runner підтверджує завдання і пише логи тільки з цим токеном; звичайні користувачі не можуть підробляти статуси CI.
-
-### Двофакторна автентифікація (2FA / TOTP)
-- Створення пристрою: `POST /api/v1/two-factor-devices/` → відповідь містить `secret` та `otpauth_url`.
-- Підтвердження: `POST /api/v1/two-factor-devices/:id/verify/` з TOTP-кодом.
-- Після підтвердження вхід вимагатиме OTP-код. Пристрій використовується після підтвердження, під час входу.
-
-### Асинхронний імпорт репозиторіїв
-Замість синхронного `/api/v1/projects/import/` можна створити фонову задачу:
-```bash
-POST /api/v1/repository-import-jobs/
-{ "provider": "github",              # github | gitlab | gitea | custom
-  "source": "owner/repo",            # для custom/gitea — повний https-URL
-  "target_path": "username/repo" }   # власний юзернейм або шлях групи
-```
-Celery-воркер клонує репозиторій (з SSRF-захистом), налаштовує хуки, розмір, дефолтну гілку та видає власнику OWNER-доступ. Статус джоби відстежується через `GET /api/v1/repository-import-jobs/`.
-
-Саморозгорнута Git-платформа для підприємств (аналог GitLab/Gitea).
-
-**Один рядок для встановлення:**
-```bash
-curl -sSL https://raw.githubusercontent.com/ajjs1ajjs/MyGit/master/setup.sh | sudo bash
-```
-
-Після встановлення відкрийте `http://ВАШ_IP:8060`  
-Логін: `admin@example.com` / пароль генерується автоматично (або встановіть через `ADMIN_PASSWORD`)
+[![Go 1.25](https://img.shields.io/badge/Go-1.25-blue.svg)](https://go.dev)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/Version-3.0.0-orange.svg)](CHANGELOG.md)
 
 ---
 
-## Можливості
+## ✨ Можливості
 
-| Функція | Статус |
-|---|---|
-| Git-репозиторії (створення, клонування, push/pull) | ✅ |
-| Smart HTTP (git-upload-pack / git-receive-pack) | ✅ |
-| SSH-доступ (AuthorizedKeysCommand) | ✅ |
-| Git-хуки (pre-receive, post-receive) | ✅ |
-| Користувачі, JWT-авторизація, SSH-ключі, PAT-токени | ✅ |
-| Перегляд коду (файли, коміти, diff, blame, гілки, теги) | ✅ |
-| Issues (лейбли, milestones, коментарі, Markdown) | ✅ |
-| Merge Requests (diff, рев'ю, merge: ff / merge-commit) | ✅ |
-| Групи/організації (підгрупи, ролі, команди) | ✅ |
-| Wiki (Markdown, створення/редагування сторінок) | ✅ |
-| Snippets (Gist-аналоги, public/private) | ✅ |
-| Глобальний пошук (репо, issues, MR, wiki) | ✅ |
-| CI/CD (пайплайни, джоби, `.mygit-ci.yml`, раннер) | ✅ |
-| Webhooks (з Celery-доставкою, HMAC-підписом) | ✅ |
-| Сповіщення (in-app, email) | ✅ |
-| OpenAPI/Swagger-документація | ✅ |
-| Prometheus-метрики | ✅ |
-| Sentry (за бажанням) | ✅ |
-| Зміна пароля при першому вході | ✅ |
-| Темна тема (автоматично) | ✅ |
-| Адаптивний дизайн | ✅ |
+- **Git smart HTTP** — clone/push/pull через стандартний протокол (Basic auth: логін/пароль або PAT)
+- **Репозиторії**: створення, fork, видалення; bare-репо на диску `repos/{owner}/{name}.git`
+- **Перегляд коду**: дерево файлів, blob, raw, blame, коміти, гілки, теги
+- **Issues**: створення, коментарі, стани
+- **Merge Requests**: створення, merge
+- **Webhooks**: CRUD
+- **Користувачі**: реєстрація, JWT, SSH-ключі, Personal Access Tokens
+- **Права**: superuser / рольові (owner 50, maintainer 40, developer 30, reporter 20, guest 10)
+- **SPA-фронтенд**: Vue 3 + Tailwind (embedded через `go:embed`)
+- **SSH git**: AuthorizedKeysCommand + internal API
 
 ---
 
-## Стек
+## 🚀 Швидкий старт
 
-**Backend:** Python 3.12+ / Django 5 / DRF / Celery / PostgreSQL / Redis  
-**Frontend:** Vue 3 / TypeScript / TailwindCSS / Pinia / Vue Router  
-**DevOps:** Nginx / Gunicorn / Uvicorn / systemd / Docker Compose
-
----
-
-## Швидкий старт
-
-### Вимоги
-- Linux (Ubuntu 22.04+ або аналог)
-- Python 3.9+
-- PostgreSQL (автоматично, або SQLite як fallback)
-- Node.js 22+ (автоматично)
-
-### Встановлення
-
+**Linux:**
 ```bash
-# Автоматично (IP визначається сам, порт 8060)
-curl -sSL https://raw.githubusercontent.com/ajjs1ajjs/MyGit/master/setup.sh | sudo bash
-
-# З вказанням домену та порту
-sudo DOMAIN=git.company.com PORT=443 bash <(curl -sSL https://raw.githubusercontent.com/ajjs1ajjs/MyGit/master/setup.sh)
+curl -sSL https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/install.sh | sudo bash
 ```
 
-### Оновлення
-
-```bash
-curl -sSL https://raw.githubusercontent.com/ajjs1ajjs/MyGit/master/update.sh | sudo bash
+**Windows** (збірка з сирців):
+```powershell
+go build -o mygit.exe ./cmd/mygit
+.\mygit.exe -port 8080
 ```
 
-### Бекап і відновлення
+Після запуску відкрийте `http://<IP>:8080/` та **зареєструйте перший обліковий запис** — він стане власником (superuser).
+
+### Git push/pull
 
 ```bash
-# Локальний бекап
-scripts/mygit-backup create --output /opt/mygit/backups
-
-# Локальний + хмарний бекап, якщо налаштовано MYGIT_BACKUP_CLOUD_*
-scripts/mygit-backup create --encrypt --upload
-
-# Відновлення
-scripts/mygit-backup restore /opt/mygit/backups/mygit-backup-YYYYMMDD-HHMMSS.tar.gz
-
-# Перевірка безпечного тестового відновлення
-scripts/mygit-backup test-restore /opt/mygit/backups/mygit-backup-YYYYMMDD-HHMMSS.tar.gz
+git clone http://<IP>:8080/alice/myrepo.git
+cd myrepo
+git add . && git commit -m "first"
+git push origin main   # попросить логін/пароль або PAT
 ```
 
-Підтримуються SQLite/PostgreSQL, репозиторії, media-файли, `.env`, перевірка SHA256, AES-256-GCM шифрування, тестове відновлення, реплікація репозиторіїв і хмарна синхронізація через `rclone` або S3-compatible storage. Деталі: [BACKUP.md](BACKUP.md).
+Для PAT: Профіль → Tokens → створити; використовуйте як пароль.
 
 ### Docker
 
 ```bash
-cd docker && docker-compose up -d
+docker compose up -d   # або: docker run -d -p 8080:8080 -v mygit-data:/data mygit
 ```
 
 ---
 
-## Розробка
+## ⚙️ Змінні середовища
 
-```bash
-git clone https://github.com/ajjs1ajjs/MyGit.git
-cd MyGit
-
-# Бекенд
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-python manage.py migrate
-python manage.py runserver
-
-# Фронтенд
-cd frontend && npm install && npm run dev
-```
-
-**Перевірки якості:**
-```bash
-ruff check . && ruff format --check .
-mypy config apps --ignore-missing-imports
-pytest
-cd frontend && npx vue-tsc --noEmit
-```
+| Змінна | Призначення | Дефолт |
+|--------|-------------|--------|
+| `MYGIT_BASE_DIR` | Базова директорія | поточна |
+| `MYGIT_REPOS_ROOT` | Директорія bare-репозиторіїв | `{base}/repos` |
+| `MYGIT_DB_PATH` | Шлях до SQLite | `{base}/mygit.db` |
+| `MYGIT_JWT_SECRET` | Секрет JWT (авто-генерація поруч із БД) | авто |
+| `MYGIT_INTERNAL_API_TOKEN` | Токен для git hooks/CI | авто (друкується) |
+| `MYGIT_GIT_BINARY` | Шлях до git | `git` |
 
 ---
 
-## API-ендпоінти
+## 🧩 Технології
 
-Основні ендпоінти:
-```
-POST   /api/v1/auth/register/           Реєстрація
-POST   /api/v1/auth/login/              JWT-логін
-POST   /api/v1/auth/refresh/            Оновлення токена
-POST   /api/v1/auth/password-reset/     Скидання пароля
-
-GET    /api/v1/projects/                Список репозиторіїв
-POST   /api/v1/projects/                Створити репо
-GET    /api/v1/projects/:id/tree/       Файлове дерево
-GET    /api/v1/projects/:id/commits/    Історія комітів
-GET    /api/v1/projects/:id/branches/   Гілки
-
-GET    /api/v1/projects/:id/issues/     Issues
-POST   /api/v1/projects/:id/issues/     Створити issue
-
-GET    /api/v1/projects/:id/merge_requests/  MR-список
-POST   /api/v1/projects/:id/merge_requests/:num/merge/  Злити MR
-
-GET    /api/v1/groups/                  Групи
-POST   /api/v1/groups/                  Створити групу
-
-GET    /api/v1/search?q=...             Глобальний пошук
-GET    /api/v1/notifications/           Сповіщення
-```
-
----
-
-## Структура проєкту
-
-```
-mygit/
-├── apps/                  # Django-додатки
-│   ├── accounts/          # Користувачі, SSH-ключі, токени
-│   ├── api/               # REST API (ViewSets, роути)
-│   ├── ci_cd/             # CI/CD пайплайни
-│   ├── core/              # Базові моделі, міксини
-│   ├── git_service/       # Git-операції (subprocess, хуки)
-│   ├── issues/            # Issues, лейбли, milestones
-│   ├── merge_requests/    # Merge Requests, рев'ю
-│   ├── notifications/     # Сповіщення
-│   ├── organizations/     # Групи, учасники, команди
-│   ├── repositories/      # Репозиторії (ORM)
-│   ├── search/            # Глобальний пошук
-│   ├── snippets/          # Snippets
-│   ├── webhooks/          # Webhooks + Celery
-│   └── wiki/              # Wiki-сторінки
-├── config/                # Налаштування Django
-├── frontend/              # Vue.js 3 SPA
-├── docker/                # Docker Compose
-├── ansible/               # Ansible-плейбук
-├── scripts/               # SSH-скрипти, CI-раннер, бекап
-├── setup.sh               # Встановлення (одна команда)
-└── update.sh              # Оновлення (одна команда)
-```
-
----
-
-## Ліцензія
-
-MIT
+**Бекенд:** Go 1.25 · net/http · chi · SQLite (WAL, modernc.org/sqlite) · golang-jwt · git subprocess (smart HTTP)
+**Фронтенд:** Vue 3 · TypeScript · Vite · Tailwind (embedded)

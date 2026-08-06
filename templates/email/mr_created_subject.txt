@@ -1,1 +1,0 @@
-[MyGit] MR !{{ mr_number }}: {{ mr_title }}
