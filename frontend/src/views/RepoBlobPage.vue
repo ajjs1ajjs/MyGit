@@ -72,7 +72,7 @@ import { ref, computed, watch, nextTick } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
 import { useRepo } from "../composables/useRepo";
-import { marked } from "marked";
+import { renderMarkdown } from "../utils/markdown";
 import hljs from "highlight.js";
 import "highlight.js/styles/github-dark.css";
 
@@ -137,14 +137,7 @@ const language = computed(() => {
   return langMap[ext || ""] || "plaintext";
 });
 
-const renderedMarkdown = computed(() => {
-  if (!content.value) return "";
-  try {
-    return marked.parse(content.value);
-  } catch (e) {
-    return content.value;
-  }
-});
+const renderedMarkdown = computed(() => renderMarkdown(content.value));
 
 function getBreadcrumbLink(index: number) {
   const parts = filePathParts.value.slice(0, index + 1);
@@ -161,7 +154,6 @@ function getBlameLink() {
   return `/${repoUsername}/${repoName}/-/blame/${ref}?path=${encodeURIComponent(filePath)}`;
 }
 
-watch(repoId, async (id) => {
 function highlightedLine(line: string, index: number): string {
   if (!content.value) return "";
   try {

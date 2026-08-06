@@ -33,6 +33,24 @@ def validate_repository_path(value: str) -> str:
     return value
 
 
+def validate_custom_disk_path(value: str) -> str:
+    """Ensure a custom on-disk path stays inside the configured repository root."""
+    from pathlib import Path
+
+    value = (value or "").strip()
+    if not value:
+        return value
+
+    configured_root = getattr(settings, "MYGIT_REPOS_ROOT", str(settings.BASE_DIR / "repos"))
+    root = Path(configured_root).resolve(strict=False)
+    custom = Path(value).resolve(strict=False)
+    if custom == root or not custom.is_relative_to(root):
+        raise ValidationError(
+            "Custom disk path must be located inside the configured repository root."
+        )
+    return value
+
+
 class Repository(BaseModel):
     class Visibility(models.TextChoices):
         PUBLIC = "public", "Public"
@@ -76,23 +94,16 @@ class Repository(BaseModel):
         default_repo_root = str(settings.BASE_DIR / "repos")
         # Get configured value (may be default from settings)
         configured_repo_root = getattr(settings, "MYGIT_REPOS_ROOT", default_repo_root)
-        # Check if explicitly configured by comparing resolved paths
-        explicitly_configured = (
-            Path(configured_repo_root).resolve() != Path(default_repo_root).resolve()
-        )
+        root = Path(configured_repo_root).resolve(strict=False)
 
         if self.custom_disk_path:
             custom = Path(self.custom_disk_path).resolve(strict=False)
-            # Only validate custom path if MYGIT_REPOS_ROOT is explicitly configured
-            if explicitly_configured:
-                root = Path(configured_repo_root).resolve(strict=False)
-                if custom != root and not custom.is_relative_to(root):
-                    raise SuspiciousFileOperation(
-                        "Custom disk path escapes the configured repository root."
-                    )
+            if custom == root or not custom.is_relative_to(root):
+                raise SuspiciousFileOperation(
+                    "Custom disk path escapes the configured repository root."
+                )
             return custom
 
-        root = Path(configured_repo_root).resolve(strict=False)
         candidate = (root / f"{self.path}.git").resolve(strict=False)
         if candidate == root or not candidate.is_relative_to(root):
             raise SuspiciousFileOperation("Repository path escapes the configured repository root.")

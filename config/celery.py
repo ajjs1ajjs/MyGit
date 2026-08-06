@@ -2,7 +2,8 @@ import os
 
 from celery import Celery
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.local")
+# Never silently fall back to DEBUG=True local settings in production workers.
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.production")
 
 app = Celery("mygit")
 

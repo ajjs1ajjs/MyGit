@@ -8,6 +8,7 @@ from django.http import (
     HttpResponse,
     HttpResponseBadRequest,
     HttpResponseForbidden,
+    StreamingHttpResponse,
 )
 from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
@@ -153,10 +154,7 @@ def git_info_refs(request, owner: str, repo_name: str):
         return response
     except GitServiceError as e:
         logger.error(f"Git info_refs error for {repo.path}: {e}")
-        return HttpResponse(str(e), status=500)
-
-
-@csrf_exempt
+        return HttpResponse(str(e), status=500)@csrf_exempt
 @require_http_methods(["POST"])
 def git_rpc(request, owner: str, repo_name: str):
     if not _rate_limit(request, "rpc", max_requests=120):
@@ -188,10 +186,9 @@ def git_rpc(request, owner: str, repo_name: str):
         return HttpResponse("Repository not found.", status=404)
 
     try:
-        input_data = request.body
-        output = backend.handle_smart_http(service, input_stream=input_data)
+        stream = backend.stream_smart_http(service, request.stream, repo.path)
         content_type = f"application/x-{service}-result"
-        response = HttpResponse(output, content_type=content_type)
+        response = StreamingHttpResponse(stream, content_type=content_type)
         response["Cache-Control"] = "no-cache"
         return response
     except GitServiceError as e:

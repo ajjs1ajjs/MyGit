@@ -45,7 +45,8 @@ class PersonalAccessTokenAdmin(admin.ModelAdmin):
 
 @admin.register(IntegrationToken)
 class IntegrationTokenAdmin(admin.ModelAdmin):
-    list_display = ("user", "provider", "token", "created_at")
+    list_display = ("user", "provider", "created_at")
     list_filter = ("provider", "created_at")
     search_fields = ("user__username", "provider")
+    readonly_fields = ("token",)
 

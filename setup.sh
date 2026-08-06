@@ -15,6 +15,7 @@ ADMIN_EMAIL="${ADMIN_EMAIL:-admin@users.mygit.local}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="$(openssl rand -base64 12 2>/dev/null || python3 -c "import secrets;print(secrets.token_urlsafe(12))")"
 DB_PASSWORD="$(openssl rand -hex 24 2>/dev/null || python3 -c "import secrets;print(secrets.token_hex(24))")"
+INTERNAL_TOKEN="$(openssl rand -base64 32 2>/dev/null || python3 -c "import secrets;print(secrets.token_urlsafe(32))")"
 REPO_URL="${REPO_URL:-https://github.com/ajjs1ajjs/MyGit.git}"
 
 echo "  Server IP:  ${DETECTED_IP}"
@@ -116,6 +117,7 @@ CORS_ALLOWED_ORIGINS=http://${DOMAIN}:${PORT},http://${DETECTED_IP}:${PORT}
 MYGIT_REPOS_ROOT=${INSTALL_DIR}/repos
 MYGIT_SITE_NAME=MyGit
 GIT_BINARY=git
+MYGIT_INTERNAL_API_TOKEN=${INTERNAL_TOKEN}
 EMAIL_HOST=localhost
 EMAIL_PORT=25
 MYGIT_LDAP_ENABLED=False
@@ -125,6 +127,16 @@ CSRF_COOKIE_SECURE=False
 CSRF_TRUSTED_ORIGINS=http://${DETECTED_IP}:${PORT},http://localhost:${PORT}
 MYGIT_ADMIN_PASSWORD=${MYGIT_ADMIN_PASSWORD}
 EOF
+
+# Protect the secrets file from other local users.
+chmod 600 "${INSTALL_DIR}/backend/.env"
+
+# SSH hooks/access token, readable by users in the 'mygit' group.
+umask 077
+printf '%s' "${INTERNAL_TOKEN}" > "${INSTALL_DIR}/.ssh-token"
+chown root:mygit "${INSTALL_DIR}/.ssh-token" 2>/dev/null || true
+chmod 640 "${INSTALL_DIR}/.ssh-token"
+umask 022
 
 mkdir -p "${INSTALL_DIR}/repos" "${INSTALL_DIR}/backend/logs" "${INSTALL_DIR}/static" "${INSTALL_DIR}/media"
 
@@ -226,6 +238,14 @@ server {
     listen ${PORT} default_server;
     server_name ${DOMAIN} ${DETECTED_IP} localhost;
 
+    client_max_body_size 0;
+    proxy_request_buffering off;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+
     location / {
         root ${INSTALL_DIR}/static/frontend;
         try_files \$uri /index.html;
@@ -234,6 +254,15 @@ server {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host \$host;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    location /ws/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_read_timeout 3600s;
     }
     location /django-admin/ {
         proxy_pass http://127.0.0.1:8000/django-admin/;
@@ -244,6 +273,7 @@ server {
         proxy_set_header Host \$host;
         client_max_body_size 0;
         proxy_request_buffering off;
+        proxy_read_timeout 3600s;
     }
     location /static/ { alias ${INSTALL_DIR}/static/; }
     location /media/ { alias ${INSTALL_DIR}/media/; }
@@ -267,6 +297,9 @@ echo "[7/7] Setting up SSH access..."
 grep -q "mygit-authorized-keys" /etc/ssh/sshd_config 2>/dev/null || cat >> /etc/ssh/sshd_config <<EOF
 
 # MyGit SSH
+# Users who log in over SSH to use git must be members of the 'mygit' group so
+# the shell can read /opt/mygit/.ssh-token:
+#   usermod -aG mygit <username>
 AuthorizedKeysCommand ${INSTALL_DIR}/backend/scripts/mygit-authorized-keys
 AuthorizedKeysCommandUser root
 EOF

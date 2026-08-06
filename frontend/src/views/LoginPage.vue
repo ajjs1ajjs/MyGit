@@ -48,6 +48,12 @@
               <input id="current-password" name="password" v-model="pass" type="password" required autocomplete="current-password" />
             </div>
 
+            <!-- 2FA code -->
+            <div v-if="needOtp">
+              <label for="login-otp" class="text-xs font-medium text-[#171717] dark:text-[#fafafa] block mb-1.5">Two-factor code</label>
+              <input id="login-otp" name="otp" v-model="otp" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" />
+            </div>
+
             <!-- LDAP Notice -->
             <div v-if="loginType === 'ldap'" class="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 rounded-lg p-3 text-xs text-blue-700 dark:text-blue-300">
               💡 Ваш обліковий запис буде створено автоматично при першому вході. Після цього адміністратор зможе надати вам доступ до груп та проектів.
@@ -74,20 +80,26 @@ const r = useRouter();
 const a = useAuthStore(); 
 const login = ref(""); 
 const pass = ref(""); 
+const otp = ref(""); 
+const needOtp = ref(false); 
 const err = ref("");
 const loginType = ref<"standard" | "ldap">("standard");
 
 async function go() { 
   err.value = "";
   try { 
-    const u = await a.login(login.value, pass.value); 
+    const u = await a.login(login.value, pass.value, needOtp.value ? otp.value : undefined); 
     if (u.must_change_password) {
       r.push("/auth/change-password"); 
     } else {
       r.push("/"); 
     }
   } catch (e: any) { 
-    err.value = e.message; 
+    const msg = e.message || "";
+    if (/two-factor|otp|2fa/i.test(msg)) {
+      needOtp.value = true;
+    }
+    err.value = msg; 
   } 
 }
 </script>

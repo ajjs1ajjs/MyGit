@@ -182,6 +182,8 @@ class RepositoryImportJobViewSet(viewsets.ModelViewSet):
         )
 
     def perform_create(self, serializer):
+        from .tasks import process_repository_import
+
         job = serializer.save(actor=self.request.user)
         audit(
             self.request.user,
@@ -190,6 +192,7 @@ class RepositoryImportJobViewSet(viewsets.ModelViewSet):
             target_id=job.id,
             message=job.target_path,
         )
+        process_repository_import.delay(str(job.id))
 
 
 class TwoFactorDeviceViewSet(viewsets.ModelViewSet):
@@ -202,7 +205,17 @@ class TwoFactorDeviceViewSet(viewsets.ModelViewSet):
         return TwoFactorDevice.objects.filter(user=self.request.user)
 
     def perform_create(self, serializer):
-        device = serializer.save(user=self.request.user)
+        from .totp import generate_secret
+
+        method = serializer.validated_data.get("method", "totp")
+        if method == "totp":
+            device = serializer.save(
+                user=self.request.user,
+                secret=generate_secret(),
+                confirmed=False,
+            )
+        else:
+            device = serializer.save(user=self.request.user, confirmed=False)
         audit(
             self.request.user,
             "2fa.device_created",
@@ -210,3 +223,30 @@ class TwoFactorDeviceViewSet(viewsets.ModelViewSet):
             target_id=device.id,
             message=device.name,
         )
+
+    @action(methods=["post"], detail=True)
+    def verify(self, request, pk=None):
+        device = self.get_object()
+        code = (request.data.get("code") or "").strip()
+        if device.method != "totp" or not device.secret:
+            return Response(
+                {"detail": "Verification is not supported for this device."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        from .totp import verify_totp
+
+        if not verify_totp(device.secret, code):
+            return Response(
+                {"detail": "Invalid verification code."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        device.confirmed = True
+        device.save(update_fields=["confirmed"])
+        audit(
+            request.user,
+            "2fa.device_confirmed",
+            target_type="two_factor_device",
+            target_id=device.id,
+            message=device.name,
+        )
+        return Response(TwoFactorDeviceSerializer(device).data)

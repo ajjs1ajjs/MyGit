@@ -61,7 +61,7 @@
 import { ref, computed, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "../api/client";
-import { marked } from "marked";
+import { renderMarkdown } from "../utils/markdown";
 import FileDiff from "../components/FileDiff.vue";
 import { useRepo } from "../composables/useRepo";
 
@@ -103,8 +103,7 @@ const pipelineClass = computed(() => {
 });
 
 function renderMd(text: string) {
-  if (!text) return "";
-  return marked.parse(text);
+  return renderMarkdown(text);
 }
 
 async function load() {

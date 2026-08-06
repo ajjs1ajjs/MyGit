@@ -21,7 +21,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4
+    command: daphne -b 0.0.0.0 -p 8000 config.asgi:application
     volumes:
       - ..:/app
       - repos:/repos
@@ -35,6 +35,7 @@ services:
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-change-me}
       - DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
       - MYGIT_REPOS_ROOT=/repos
+      - MYGIT_INTERNAL_API_TOKEN=${MYGIT_INTERNAL_API_TOKEN:-change-me}
     depends_on:
       - db
       - redis
@@ -60,6 +61,7 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-change-me}
       - MYGIT_REPOS_ROOT=/repos
+      - MYGIT_INTERNAL_API_TOKEN=${MYGIT_INTERNAL_API_TOKEN:-change-me}
     depends_on:
       - db
       - redis

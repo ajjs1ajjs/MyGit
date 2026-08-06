@@ -1,40 +1,23 @@
-import ipaddress
-import socket
-from urllib.parse import urlparse
-
 from rest_framework import serializers
+
+from apps.core.security import validate_public_http_url
 
 from .models import Webhook, WebhookDelivery
 
-BLOCKED_NETWORKS = [
-    ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("169.254.0.0/16"),
-    ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("fc00::/7"),
-]
-
 
 def validate_webhook_url(url_str: str) -> bool:
-    parsed = urlparse(url_str)
-    if parsed.scheme not in ("https", "http"):
-        return False
     try:
-        host = parsed.hostname or ""
-        port = parsed.port or 80
-        for addrinfo in socket.getaddrinfo(host, port):
-            ip = addrinfo[4][0]
-            addr = ipaddress.ip_address(ip)
-            if any(addr in net for net in BLOCKED_NETWORKS):
-                return False
+        validate_public_http_url(url_str)
         return True
     except Exception:
         return False
 
 
 class WebhookSerializer(serializers.ModelSerializer):
+    secret = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, trim_whitespace=False
+    )
+
     class Meta:
         model = Webhook
         fields = [

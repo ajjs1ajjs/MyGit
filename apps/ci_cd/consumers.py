@@ -1,8 +1,8 @@
 import json
 import logging
 
-from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
+from channels.generic.websocket import AsyncWebsocketConsumer
 
 from apps.ci_cd.models import Job
 
@@ -21,12 +21,20 @@ class JobLogConsumer(AsyncWebsocketConsumer):
         self.job_id = self.scope["url_route"]["kwargs"]["job_id"]
         self.room_group_name = f"job_{self.job_id}"
 
+        job = await self.get_job()
+        if not job:
+            await self.close()
+            return
+
+        if not await self.can_access(user, job):
+            await self.close()
+            return
+
         # Join room group
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.accept()
 
         # Send initial log if job exists
-        job = await self.get_job()
         if job:
             await self.send(text_data=json.dumps({
                 "type": "log",
@@ -53,6 +61,23 @@ class JobLogConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def get_job(self):
         try:
-            return Job.objects.get(id=self.job_id)
+            return Job.objects.select_related("pipeline__repository").get(
+                id=self.job_id,
+                pipeline_id=self.pipeline_id,
+                pipeline__repository_id=self.project_id,
+            )
         except Job.DoesNotExist:
             return None
+
+    @database_sync_to_async
+    def can_access(self, user, job) -> bool:
+        from apps.repositories.models import Repository, RepositoryAccess
+
+        repo = job.pipeline.repository
+        if repo.visibility == Repository.Visibility.PUBLIC:
+            return True
+        if getattr(user, "is_superuser", False) or str(repo.owner_id) == str(user.id):
+            return True
+        return RepositoryAccess.objects.filter(
+            repository=repo, user=user, role__gte=RepositoryAccess.Role.GUEST
+        ).exists()

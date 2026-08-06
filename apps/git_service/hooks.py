@@ -7,7 +7,18 @@ import sys
 import urllib.request
 
 API_URL = os.environ.get("MYGIT_API_URL", "http://127.0.0.1:8000")
-API_TOKEN = os.environ.get("MYGIT_INTERNAL_API_TOKEN") or os.environ.get("MYGIT_API_TOKEN", "")
+
+def _token():
+    token = os.environ.get("MYGIT_INTERNAL_API_TOKEN") or os.environ.get("MYGIT_API_TOKEN", "")
+    if token:
+        return token
+    try:
+        with open(os.environ.get("MYGIT_TOKEN_FILE", "/opt/mygit/.ssh-token")) as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+API_TOKEN = _token()
 
 def main():
     repo_path = os.environ.get("GL_REPO", "")
@@ -51,7 +62,18 @@ import sys
 import urllib.request
 
 API_URL = os.environ.get("MYGIT_API_URL", "http://127.0.0.1:8000")
-API_TOKEN = os.environ.get("MYGIT_INTERNAL_API_TOKEN") or os.environ.get("MYGIT_API_TOKEN", "")
+
+def _token():
+    token = os.environ.get("MYGIT_INTERNAL_API_TOKEN") or os.environ.get("MYGIT_API_TOKEN", "")
+    if token:
+        return token
+    try:
+        with open(os.environ.get("MYGIT_TOKEN_FILE", "/opt/mygit/.ssh-token")) as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+API_TOKEN = _token()
 
 def main():
     repo_path = os.environ.get("GL_REPO", "")

@@ -82,7 +82,7 @@ import { useRoute } from "vue-router";
 import { api } from "../api/client";
 import { useRepo } from "../composables/useRepo";
 import { useNotificationStore } from "../stores/notification";
-import { marked } from "marked";
+import { renderMarkdown } from "../utils/markdown";
 import hljs from "highlight.js";
 import "highlight.js/styles/github-dark.css";
 
@@ -100,14 +100,7 @@ const readmeContent = ref("");
 
 const cloneUrl = computed(() => `http://${window.location.host}/${repo.value?.path}.git`);
 
-const renderedReadme = computed(() => {
-  if (!readmeContent.value) return "";
-  try {
-    return marked.parse(readmeContent.value);
-  } catch (e) {
-    return readmeContent.value;
-  }
-});
+const renderedReadme = computed(() => renderMarkdown(readmeContent.value));
 
 function fmt(d: string) {
   return d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';

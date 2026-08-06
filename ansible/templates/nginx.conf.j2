@@ -22,6 +22,7 @@ server {
     add_header X-Content-Type-Options nosniff;
     add_header X-XSS-Protection "1; mode=block";
     add_header Referrer-Policy strict-origin-when-cross-origin;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
 
     # ------------------------------------------------------------------
     # Gzip
@@ -94,6 +95,20 @@ server {
     }
 
     # ------------------------------------------------------------------
+    # WebSocket (CI job logs)
+    # ------------------------------------------------------------------
+    location /ws/ {
+        proxy_pass http://mygit_api;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;
+    }
+
+    # ------------------------------------------------------------------
     # Django Admin
     # ------------------------------------------------------------------
     location /django-admin/ {
@@ -104,7 +119,7 @@ server {
     }
 
     # ------------------------------------------------------------------
-    # API & everything else → Gunicorn
+    # API & everything else → Daphne (ASGI)
     # ------------------------------------------------------------------
     location / {
         proxy_pass http://mygit_api;
@@ -113,15 +128,15 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Real-IP $remote_addr;
 
-        # WebSocket support (if needed)
+        # WebSocket support (CI job logs)
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
 
-        client_max_body_size 50m;
+        client_max_body_size 0;
 
-        proxy_read_timeout 120s;
-        proxy_send_timeout 120s;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
     }
 
     # ------------------------------------------------------------------

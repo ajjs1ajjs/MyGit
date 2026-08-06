@@ -21,12 +21,40 @@ class UserSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "date_joined"]
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        viewer = getattr(request, "user", None)
+        viewer_ok = bool(viewer and getattr(viewer, "is_authenticated", False))
+        is_self = viewer_ok and str(viewer.id) == str(instance.id)
+        if not (viewer_ok and (getattr(viewer, "is_superuser", False) or is_self)):
+            for field in ("email", "is_superuser", "is_active", "must_change_password"):
+                data.pop(field, None)
+        return data
+
 
 class SSHKeySerializer(serializers.ModelSerializer):
     class Meta:
         model = SSHKey
         fields = ["id", "title", "public_key", "fingerprint", "created_at"]
         read_only_fields = ["id", "fingerprint", "created_at"]
+
+    def validate_public_key(self, value):
+        import base64
+
+        value = (value or "").strip()
+        if not value or "\n" in value or "\r" in value:
+            raise serializers.ValidationError("Public key must be a single line.")
+        parts = value.split()
+        if len(parts) < 2 or not parts[0].startswith(
+            ("ssh-", "ecdsa-", "sk-", "rsa-sha2-")
+        ):
+            raise serializers.ValidationError("Invalid SSH public key format.")
+        try:
+            base64.b64decode(parts[1], validate=True)
+        except Exception:
+            raise serializers.ValidationError("Invalid SSH key body.") from None
+        return value
 
 
 class PatCreateSerializer(serializers.Serializer):
@@ -63,7 +91,9 @@ class UserViewSet(viewsets.GenericViewSet):
 
     def retrieve(self, request, username=None):
         user = get_object_or_404(User, username=username)
-        return Response(UserSerializer(user).data)
+        return Response(
+            UserSerializer(user, context={"request": request}).data
+        )
 
     def partial_update(self, request, username=None):
         user = get_object_or_404(User, username=username)
@@ -76,7 +106,7 @@ class UserViewSet(viewsets.GenericViewSet):
         password = data.pop("password", None)
         if isinstance(password, list):
             password = password[0] if password else None
-        serializer = UserSerializer(user, data=data, partial=True)
+        serializer = UserSerializer(user, data=data, partial=True, context={"request": request})
         serializer.is_valid(raise_exception=True)
         serializer.save()
         if password:
@@ -91,19 +121,25 @@ class UserViewSet(viewsets.GenericViewSet):
     def list(self, request):
         page = self.paginate_queryset(self.get_queryset())
         if page is not None:
-            return self.get_paginated_response(UserSerializer(page, many=True).data)
-        return Response(UserSerializer(self.get_queryset(), many=True).data)
+            return self.get_paginated_response(
+                UserSerializer(page, many=True, context={"request": request}).data
+            )
+        return Response(
+            UserSerializer(self.get_queryset(), many=True, context={"request": request}).data
+        )
 
     @action(methods=["get", "patch"], detail=False)
     def me(self, request):
         if request.method == "GET":
-            data = UserSerializer(request.user).data
+            data = UserSerializer(request.user, context={"request": request}).data
             data["must_change_password"] = request.user.must_change_password
             return Response(data)
         data = request.data.copy()
         for field in ("is_superuser", "is_staff", "is_active", "must_change_password", "password"):
             data.pop(field, None)
-        serializer = UserSerializer(request.user, data=data, partial=True)
+        serializer = UserSerializer(
+            request.user, data=data, partial=True, context={"request": request}
+        )
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)

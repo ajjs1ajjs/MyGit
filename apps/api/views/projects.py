@@ -1,4 +1,6 @@
 import logging
+import os
+from pathlib import Path
 
 from django.conf import settings
 from django.db.models import Q
@@ -6,10 +8,12 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.api.mixins import ensure_repo_access
+from apps.core.security import validate_public_http_url
 from apps.git_service.backend import GitBackend, GitServiceError
 from apps.repositories.models import (
     CodeOwnerRule,
@@ -21,6 +25,23 @@ from apps.repositories.models import (
 )
 
 logger = logging.getLogger("mygit")
+
+
+def _path_within(child: Path, parent: Path) -> bool:
+    try:
+        resolved = child.resolve(strict=False)
+        base = parent.resolve(strict=False)
+    except OSError:
+        return False
+    if os.name == "nt":
+        child_str = resolved.as_posix().casefold()
+        base_str = base.as_posix().casefold()
+        return child_str == base_str or child_str.startswith(base_str.rstrip("/") + "/")
+    try:
+        resolved.relative_to(base)
+        return True
+    except ValueError:
+        return False
 
 
 class RepositorySerializer(serializers.ModelSerializer):
@@ -54,9 +75,14 @@ class RepositorySerializer(serializers.ModelSerializer):
         ]
 
     def validate_custom_disk_path(self, value):
+        from apps.repositories.models import validate_custom_disk_path
+
         if not value or not value.strip():
             return None
-        return value.strip()
+        try:
+            return validate_custom_disk_path(value.strip())
+        except Exception as e:
+            raise serializers.ValidationError(str(e)) from e
 
     def create(self, validated_data):
         request = self.context["request"]
@@ -228,7 +254,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             backend = self._get_backend(repo)
             entries = backend.get_tree(ref, path)
             return Response({"ref": ref, "path": path, "entries": entries})
-        except GitServiceError as e:
+        except (GitServiceError, KeyError) as e:
             return Response({"detail": str(e)}, status=404)
 
     @action(methods=["get"], detail=True, url_path="blobs/(?P<sha>[^/]+)")
@@ -259,7 +285,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             return Response({"detail": str(e)}, status=404)
 
     @action(methods=["get"], detail=True, url_path="raw/(?P<ref>[^/]+)/(?P<path>.+)")
-    def raw_blob_by_path(self, request, id=None, ref=None, path=None):
+    def raw_blob_by_ref_path(self, request, id=None, ref=None, path=None):
         repo = self.get_object()
         try:
             backend = self._get_backend(repo)
@@ -271,7 +297,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             return Response({"detail": str(e)}, status=404)
 
     @action(methods=["get"], detail=True, url_path="raw")
-    def raw_blob_by_path(self, request, id=None):
+    def raw_blob_content(self, request, id=None):
         repo = self.get_object()
         ref = request.query_params.get("ref", repo.default_branch)
         path = request.query_params.get("path", "")
@@ -304,7 +330,12 @@ class ProjectViewSet(viewsets.ModelViewSet):
     def commits(self, request, id=None):
         repo = self.get_object()
         ref = request.query_params.get("ref", repo.default_branch)
-        page = int(request.query_params.get("page", 1))
+        try:
+            page = int(request.query_params.get("page", 1))
+        except (TypeError, ValueError):
+            return Response({"detail": "Invalid page."}, status=400)
+        if page < 1:
+            page = 1
         try:
             backend = self._get_backend(repo)
             result = backend.get_commits(ref, page=page)
@@ -496,8 +527,9 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(methods=["get"], detail=False, url_path="import/github/repos")
     def github_repos(self, request):
-        from apps.accounts.models import IntegrationToken
         import requests
+
+        from apps.accounts.models import IntegrationToken
 
         token = request.query_params.get("token")
         if not token:
@@ -544,8 +576,9 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(methods=["get"], detail=False, url_path="import/gitlab/repos")
     def gitlab_repos(self, request):
-        from apps.accounts.models import IntegrationToken
         import requests
+
+        from apps.accounts.models import IntegrationToken
 
         token = request.query_params.get("token")
         if not token:
@@ -591,10 +624,11 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(methods=["post"], detail=False, url_path="import")
     def import_project(self, request):
-        from apps.accounts.models import IntegrationToken
         import os
-        import subprocess
         import shutil
+        import subprocess
+
+        from apps.accounts.models import IntegrationToken
         from apps.git_service.hooks import install_hooks
 
         provider = request.data.get("provider")  # "github", "gitlab", or "custom"
@@ -655,26 +689,24 @@ class ProjectViewSet(viewsets.ModelViewSet):
                     {"detail": "repo_name is required for github provider."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            if token:
-                actual_clone_url = f"https://{token}@github.com/{repo_name}.git"
-            else:
-                actual_clone_url = f"https://github.com/{repo_name}.git"
+            actual_clone_url = f"https://github.com/{repo_name}.git"
         elif provider == "gitlab":
             if not repo_name:
                 return Response(
                     {"detail": "repo_name is required for gitlab provider."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            if token:
-                actual_clone_url = f"https://oauth2:{token}@gitlab.com/{repo_name}.git"
-            else:
-                actual_clone_url = f"https://gitlab.com/{repo_name}.git"
+            actual_clone_url = f"https://gitlab.com/{repo_name}.git"
         elif provider == "custom":
             if not clone_url:
                 return Response(
                     {"detail": "clone_url is required for custom provider."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            try:
+                validate_public_http_url(clone_url)
+            except serializers.ValidationError as e:
+                return Response({"detail": str(e.detail[0])}, status=status.HTTP_400_BAD_REQUEST)
             actual_clone_url = clone_url
         else:
             return Response({"detail": "Invalid provider."}, status=status.HTTP_400_BAD_REQUEST)
@@ -699,17 +731,20 @@ class ProjectViewSet(viewsets.ModelViewSet):
         disk_path = repo.disk_path
         disk_path.parent.mkdir(parents=True, exist_ok=True)
 
-        cmd = ["git", "clone", "--bare", actual_clone_url, str(disk_path)]
+        # Temporarily embed credentials in the clone URL so private imports work;
+        # they are stripped from the persisted remote config right after the clone.
+        auth_url = actual_clone_url
+        if token and provider == "github":
+            auth_url = f"https://{token}@github.com/{repo_name}.git"
+        elif token and provider == "gitlab":
+            auth_url = f"https://oauth2:{token}@gitlab.com/{repo_name}.git"
+
+        cmd = ["git", "clone", "--bare", auth_url, str(disk_path)]
         try:
             env = os.environ.copy()
-            if token and provider == "github":
-                env["GIT_ASKPASS"] = ""
-                env["GIT_USERNAME"] = token
-            elif token and provider == "gitlab":
-                env["GIT_ASKPASS"] = ""
-                env["GIT_USERNAME"] = "oauth2"
-                env["GIT_PASSWORD"] = token
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=90, env=env)
+            res = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=90, env=env
+            )
             if res.returncode != 0:
                 if disk_path.exists():
                     shutil.rmtree(disk_path)
@@ -720,6 +755,13 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 return Response(
                     {"detail": f"Clone failed: {err_msg}"}, status=status.HTTP_400_BAD_REQUEST
                 )
+            # Strip any credentials that git may have persisted in the repo config.
+            subprocess.run(
+                ["git", "-C", str(disk_path), "remote", "set-url", "origin", actual_clone_url],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
         except subprocess.TimeoutExpired:
             if disk_path.exists():
                 shutil.rmtree(disk_path)
@@ -752,6 +794,18 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         self._ensure_repo_role(instance, RepositoryAccess.Role.OWNER)
+        if instance.custom_disk_path:
+            # Never delete a custom path that is shared with (or belongs to)
+            # another repository.
+            shared = (
+                Repository.objects.filter(custom_disk_path=instance.custom_disk_path)
+                .exclude(pk=instance.pk)
+                .exists()
+            )
+            if shared:
+                raise PermissionDenied(
+                    "Custom disk path is shared with another repository."
+                )
         backend = GitBackend(instance.disk_path)
         if backend.exists():
             backend.delete()
@@ -774,8 +828,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
         try:
             if os.name == "nt":
                 if not target_path:
-                    import string
                     import ctypes
+                    import string
 
                     bitmask = ctypes.windll.kernel32.GetLogicalDrives()
                     for letter in string.ascii_uppercase:
@@ -786,7 +840,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                     parent_path = None
                 else:
                     path_obj = Path(target_path).resolve(strict=True)
-                    if not str(path_obj).startswith(allowed_root):
+                    if not _path_within(path_obj, Path(allowed_root)):
                         return Response({"detail": "Path outside allowed root."}, status=403)
                     current_path = str(path_obj)
                     if path_obj.parent != path_obj:
@@ -804,7 +858,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                     path_obj = Path(allowed_root) if allowed_root else Path("/")
                 else:
                     path_obj = Path(target_path).resolve(strict=True)
-                    if allowed_root and not str(path_obj).startswith(allowed_root):
+                    if allowed_root and not _path_within(path_obj, Path(allowed_root)):
                         return Response({"detail": "Path outside allowed root."}, status=403)
 
                 current_path = str(path_obj)
@@ -841,13 +895,13 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 {"detail": "parent_path and name are required."}, status=status.HTTP_400_BAD_REQUEST
             )
 
-        from pathlib import Path
         import os
+        from pathlib import Path
 
         allowed_root = os.path.realpath(getattr(settings, "MYGIT_REPOS_ROOT", ""))
         try:
             target = (Path(parent_path) / name).resolve(strict=False)
-            if allowed_root and not str(target).startswith(allowed_root):
+            if allowed_root and not _path_within(target, Path(allowed_root)):
                 return Response({"detail": "Path outside allowed root."}, status=403)
             target.mkdir(parents=True, exist_ok=True)
             return Response({"path": str(target)})

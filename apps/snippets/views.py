@@ -14,6 +14,8 @@ class SnippetViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        if self.action in ("update", "partial_update", "destroy"):
+            return Snippet.objects.filter(author=user)
         return Snippet.objects.filter(Q(visibility="public") | Q(author=user))
 
     def perform_create(self, serializer):

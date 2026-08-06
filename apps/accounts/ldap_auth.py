@@ -59,6 +59,12 @@ def authenticate_ldap_user(username: str, password: str):
     if not username or not password:
         return None
 
+    # LDAP is strictly opt-in. This also prevents the auto-discovery network
+    # scans (DNS + TCP connect to port 389) that used to run on every failed
+    # local login when LDAP was not configured at all.
+    if not getattr(settings, "MYGIT_LDAP_ENABLED", False):
+        return None
+
     try:
         from ldap3 import ALL, Connection, Server
         from ldap3.core.exceptions import LDAPException
@@ -67,8 +73,8 @@ def authenticate_ldap_user(username: str, password: str):
         logger.warning("LDAP login requested but ldap3 is not installed.")
         return None
 
-    # Option A: Explicitly enabled and fully configured
-    if getattr(settings, "MYGIT_LDAP_ENABLED", False) and getattr(settings, "MYGIT_LDAP_SERVER_URI", "") and getattr(settings, "MYGIT_LDAP_USER_SEARCH_BASE", ""):
+    # Option A: Explicitly configured
+    if getattr(settings, "MYGIT_LDAP_SERVER_URI", "") and getattr(settings, "MYGIT_LDAP_USER_SEARCH_BASE", ""):
         try:
             server = Server(settings.MYGIT_LDAP_SERVER_URI, get_info=ALL)
             bind_user = settings.MYGIT_LDAP_BIND_DN or None

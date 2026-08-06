@@ -48,6 +48,9 @@
     git_repo_url: "{{ git_repo_url | default('https://github.com/ajjs1ajjs/MyGit.git') }}"
     git_version: "{{ git_branch | default('main') }}"
 
+    # --------------- Internal API token (SSH hooks / CI runner) ---------------
+    mygit_internal_token: "{{ vault_internal_token | default(lookup('password', mygit_home + '/.ssh-token chars=base64 length=32')) }}"
+
     # --------------- Python ---------------
     python_version: "3.12"
     python_bin: "/usr/bin/python{{ python_version }}"
@@ -238,6 +241,13 @@
       no_log: yes
       notify: restart mygit services
 
+    - name: 6/10 | Protect SSH token file (readable by mygit group for git hooks)
+      file:
+        path: "{{ mygit_home }}/.ssh-token"
+        owner: root
+        group: "{{ mygit_group }}"
+        mode: "0640"
+
     # --------------------------------------------------------------------------
     # 7. DATABASE MIGRATIONS & STATIC FILES
     # --------------------------------------------------------------------------
@@ -293,7 +303,8 @@ else:
         group: root
         mode: "0644"
       loop:
-        - mygit-gunicorn.service
+        - mygit-api.service
+        - mygit-git-http.service
         - mygit-celery.service
         - mygit-celery-beat.service
       notify: restart mygit services
@@ -308,7 +319,8 @@ else:
         state: started
         enabled: yes
       loop:
-        - mygit-gunicorn.service
+        - mygit-api.service
+        - mygit-git-http.service
         - mygit-celery.service
         - mygit-celery-beat.service
 
@@ -387,7 +399,8 @@ else:
         state: restarted
         daemon_reload: yes
       loop:
-        - mygit-gunicorn.service
+        - mygit-api.service
+        - mygit-git-http.service
         - mygit-celery.service
         - mygit-celery-beat.service
 

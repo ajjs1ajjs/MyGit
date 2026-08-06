@@ -60,13 +60,20 @@ class GroupViewSet(viewsets.ModelViewSet):
 
         if request.method == "GET":
             members = GroupMember.objects.filter(group=group)
-            return Response(GroupMemberSerializer(members, many=True).data)
+            return Response(
+                GroupMemberSerializer(
+                    members, many=True, context={"request": request}
+                ).data
+            )
 
         self._ensure_group_role(group, GroupMember.Role.MAINTAINER)
         serializer = GroupMemberSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         member = serializer.save(group=group)
-        return Response(GroupMemberSerializer(member).data, status=status.HTTP_201_CREATED)
+        return Response(
+            GroupMemberSerializer(member, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(methods=["delete"], detail=True, url_path="members/(?P<member_id>[^/.]+)")
     def remove_member(self, request, id=None, member_id=None):

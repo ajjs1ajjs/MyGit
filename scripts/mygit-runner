@@ -146,7 +146,10 @@ def run_job(api_url, token, runner_id):
 def main():
     parser = argparse.ArgumentParser(description="MyGit CI Runner")
     parser.add_argument("--url", default=os.environ.get("MYGIT_API_URL", "http://127.0.0.1:8000"))
-    parser.add_argument("--token", default=os.environ.get("MYGIT_API_TOKEN", ""))
+    parser.add_argument(
+        "--token",
+        default=os.environ.get("MYGIT_INTERNAL_API_TOKEN") or os.environ.get("MYGIT_API_TOKEN", ""),
+    )
     parser.add_argument("--runner-id", default=os.environ.get("MYGIT_RUNNER_ID", "runner-1"))
     parser.add_argument("--interval", type=int, default=5)
     args = parser.parse_args()

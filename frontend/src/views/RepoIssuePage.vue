@@ -60,7 +60,7 @@
 import { ref, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { api } from "../api/client";
-import { marked } from "marked";
+import { renderMarkdown } from "../utils/markdown";
 import { useRepo } from "../composables/useRepo";
 
 const route = useRoute();
@@ -76,8 +76,7 @@ const commentLoading = ref(false);
 const commentError = ref("");
 
 function renderMd(text: string) {
-  if (!text) return "";
-  return marked.parse(text);
+  return renderMarkdown(text);
 }
 
 async function loadIssue() {

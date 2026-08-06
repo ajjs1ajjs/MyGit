@@ -133,11 +133,14 @@ def pre_receive(request):
         protected = _matching_protected_branch(repo, branch)
         if protected:
             is_delete = new_rev == "0" * 40
-            is_force_push = old_rev != "0" * 40 and new_rev != "0" * 40
             if is_delete and not protected.allow_delete:
                 return JsonResponse({"detail": "ERROR: Protected branch cannot be deleted."}, status=403)
-            if is_force_push and not protected.allow_force_push:
-                return JsonResponse({"detail": "ERROR: Force push is disabled for this branch."}, status=403)
+            if not is_delete and old_rev != "0" * 40:
+                if _is_force_push(repo, old_rev, new_rev) and not protected.allow_force_push:
+                    return JsonResponse(
+                        {"detail": "ERROR: Force push is disabled for this branch."},
+                        status=403,
+                    )
             if not protected.allow_direct_push:
                 return JsonResponse(
                     {"detail": "ERROR: Direct push is disabled for this protected branch."},
@@ -197,6 +200,21 @@ def _matching_protected_branch(repo: Repository, branch: str) -> ProtectedBranch
         if rule.matches(branch):
             return rule
     return None
+
+
+def _is_force_push(repo: Repository, old_rev: str, new_rev: str) -> bool:
+    """A push is a force push when the new revision rewrites history, i.e. the
+    new commit is an ancestor of the old one. Fail closed on any error."""
+    try:
+        from git import Repo
+
+        git_repo = Repo(repo.disk_path)
+        try:
+            return bool(git_repo.is_ancestor(new_rev, old_rev))
+        finally:
+            git_repo.close()
+    except Exception:
+        return True
 
 
 @csrf_exempt

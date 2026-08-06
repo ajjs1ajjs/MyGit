@@ -20,6 +20,21 @@ class GitServiceError(Exception):
     pass
 
 
+def git_env(repo_logical_path: str = "") -> dict:
+    """Environment for git subprocesses.
+
+    Carries the logical repository path (used by pre/post-receive hooks) and the
+    internal API token so that hooks can authenticate against the internal API.
+    """
+    env = os.environ.copy()
+    if repo_logical_path:
+        env["GL_REPO"] = repo_logical_path
+    token = getattr(settings, "MYGIT_INTERNAL_API_TOKEN", "")
+    if token:
+        env["MYGIT_INTERNAL_API_TOKEN"] = token
+    return env
+
+
 class GitBackend:
     def __init__(self, repo_path: Path):
         self.repo_path = repo_path
@@ -85,6 +100,7 @@ class GitBackend:
             stdin=subprocess.PIPE if input_stream else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=git_env(),
         )
         try:
             stdout, stderr = proc.communicate(input=input_stream, timeout=120)
@@ -97,6 +113,55 @@ class GitBackend:
             raise GitServiceError(stderr.decode(errors="replace"))
 
         return stdout
+
+    def stream_smart_http(
+        self, service: str, input_stream=None, repo_logical_path: str = ""
+    ):
+        """Stream a stateless-rpc request (push/pull) without buffering the body.
+
+        ``input_stream`` must be a file-like object (Django ``request.stream``).
+        Returns a generator yielding stdout chunks.
+        """
+        import shutil
+
+        if service not in SERVICE_MAP:
+            raise GitServiceError(f"Unknown service: {service}")
+
+        git_service = SERVICE_MAP[service]
+        cmd = [GIT_BINARY, git_service, "--stateless-rpc", str(self.repo_path)]
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=git_env(repo_logical_path),
+        )
+
+        def generate():
+            try:
+                if input_stream is not None:
+                    shutil.copyfileobj(input_stream, proc.stdin, length=64 * 1024)
+            except Exception:
+                proc.kill()
+            finally:
+                try:
+                    proc.stdin.close()
+                except Exception:
+                    pass
+            try:
+                while True:
+                    chunk = proc.stdout.read(64 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                if proc.stdout:
+                    proc.stdout.close()
+                if proc.stderr:
+                    proc.stderr.close()
+                proc.wait()
+
+        return generate()
 
     def has_commits(self) -> bool:
         repo = self.get_repo()
@@ -307,8 +372,11 @@ class GitBackend:
         repo = self.get_repo()
         try:
             merge_base = repo.merge_base(source, target)
-            if len(merge_base) == 0:
-                raise GitServiceError("No common merge base found.")
+            target_commit = repo.commit(target)
+            if not merge_base or merge_base[0] != target_commit:
+                raise GitServiceError(
+                    "Cannot fast-forward: target branch is not an ancestor of source."
+                )
 
             source_commit = repo.commit(source)
             repo.head.reference = repo.heads[target]
@@ -333,7 +401,8 @@ class GitBackend:
             merge_msg,
             source,
         ]
-        env = {"GIT_EDITOR": "true", "GIT_MERGE_AUTOEDIT": "no"}
+        merge_env = git_env()
+        merge_env.update({"GIT_EDITOR": "true", "GIT_MERGE_AUTOEDIT": "no"})
         existing = sp.run(
             ["git", "-C", str(self.repo_path), "rev-parse", target],
             capture_output=True,
@@ -342,7 +411,7 @@ class GitBackend:
         if existing.returncode != 0:
             raise GitServiceError(f"Target branch '{target}' not found.")
 
-        proc = sp.run(cmd, capture_output=True, text=True, env={**os.environ, **env})
+        proc = sp.run(cmd, capture_output=True, text=True, env=merge_env)
         if proc.returncode != 0:
             error = proc.stderr or "Merge conflict or error."
             raise GitServiceError(error)
@@ -362,7 +431,7 @@ class GitBackend:
         cmd = [GIT_BINARY, "archive", f"--format={fmt}", "--output=-", ref]
 
         def generate():
-            proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, cwd=str(self.repo_path))
+            proc = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, cwd=str(self.repo_path), env=git_env())
             stderr_data = b""
             try:
                 while True:

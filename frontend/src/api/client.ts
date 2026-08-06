@@ -17,6 +17,7 @@ async function tryRefreshToken() {
     if (!res.ok) return false;
     const data = await res.json();
     localStorage.setItem("access_token", data.access);
+    if (data.refresh) localStorage.setItem("refresh_token", data.refresh);
     return true;
   } catch {
     return false;

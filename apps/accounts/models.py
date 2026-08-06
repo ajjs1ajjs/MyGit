@@ -141,7 +141,7 @@ class IntegrationToken(BaseModel):
 
     def get_token(self) -> str:
         if not self.token.startswith("gAAAAA"):
-            return self.token
+            return ""
         try:
             return self._get_fernet().decrypt(self.token.encode()).decode()
         except Exception:
@@ -151,15 +151,8 @@ class IntegrationToken(BaseModel):
         self.token = self._get_fernet().encrypt(raw.encode()).decode()
 
     def save(self, *args, **kwargs):
-        is_new = self.pk is None
-        raw_token = None
-        if is_new and self.token and not self.token.startswith("gAAAAA"):
-            raw_token = self.token
-            super().save(*args, **kwargs)
-            self.token = self._get_fernet().encrypt(raw_token.encode()).decode()
-            self.save(update_fields=["token"])
-        else:
-            if self.pk and self.token and not self.token.startswith("gAAAAA"):
-                self.set_token(self.token)
-            super().save(*args, **kwargs)
+        # Encrypt before persisting: never write the raw token to the database.
+        if self.token and not self.token.startswith("gAAAAA"):
+            self.token = self._get_fernet().encrypt(self.token.encode()).decode()
+        super().save(*args, **kwargs)
 

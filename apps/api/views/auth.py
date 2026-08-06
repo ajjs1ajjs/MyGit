@@ -1,3 +1,5 @@
+from contextlib import suppress
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
@@ -9,6 +11,7 @@ from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -61,6 +64,13 @@ class LoginSerializer(serializers.Serializer):
 class AuthViewSet(viewsets.GenericViewSet):
     permission_classes = [AllowAny]
 
+    def get_throttles(self):
+        throttles = super().get_throttles()
+        if self.action in ("login", "password_reset", "password_reset_confirm"):
+            self.throttle_scope = "login"
+            throttles.append(ScopedRateThrottle())
+        return throttles
+
     @method_decorator(csrf_exempt)
     def dispatch(self, *args, **kwargs):
         return super().dispatch(*args, **kwargs)
@@ -101,6 +111,12 @@ class AuthViewSet(viewsets.GenericViewSet):
         if not user.is_active:
             return Response({"detail": "Account is disabled."}, status=status.HTTP_401_UNAUTHORIZED)
 
+        if not self._verify_two_factor(user, request):
+            return Response(
+                {"detail": "Two-factor code is required."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
         refresh = RefreshToken.for_user(user)
         return Response(
             {
@@ -115,6 +131,24 @@ class AuthViewSet(viewsets.GenericViewSet):
             }
         )
 
+    @staticmethod
+    def _verify_two_factor(user, request) -> bool:
+        from apps.administration.models import TwoFactorDevice
+        from apps.administration.totp import verify_totp
+
+        devices = list(
+            TwoFactorDevice.objects.filter(user=user, confirmed=True, method="totp")
+        )
+        if not devices:
+            return True
+        code = request.data.get("otp", "") or request.data.get("code", "")
+        code = str(code).strip()
+        if not code:
+            return False
+        return any(
+            device.secret and verify_totp(device.secret, code) for device in devices
+        )
+
     @action(methods=["post"], detail=False)
     def refresh(self, request):
         refresh_token = request.data.get("refresh")
@@ -124,7 +158,17 @@ class AuthViewSet(viewsets.GenericViewSet):
             )
         try:
             refresh = RefreshToken(refresh_token)
-            return Response({"access": str(refresh.access_token)})
+            data = {"access": str(refresh.access_token)}
+            rotate = getattr(settings, "SIMPLE_JWT", {}).get("ROTATE_REFRESH_TOKENS", False)
+            if rotate:
+                if getattr(settings, "SIMPLE_JWT", {}).get("BLACKLIST_AFTER_ROTATION", False):
+                    with suppress(Exception):
+                        refresh.blacklist()
+                refresh.set_jti()
+                refresh.set_exp()
+                refresh.set_iat()
+                data["refresh"] = str(refresh)
+            return Response(data)
         except TokenError:
             return Response(
                 {"detail": "Invalid or expired token."}, status=status.HTTP_401_UNAUTHORIZED

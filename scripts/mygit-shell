@@ -16,7 +16,20 @@ import urllib.request
 
 API_URL = os.environ.get("MYGIT_API_URL", "http://127.0.0.1:8000")
 REPOS_ROOT = os.environ.get("MYGIT_REPOS_ROOT", "/opt/mygit/repos")
-API_TOKEN = os.environ.get("MYGIT_INTERNAL_API_TOKEN") or os.environ.get("MYGIT_API_TOKEN", "")
+
+
+def get_token() -> str:
+    token = os.environ.get("MYGIT_INTERNAL_API_TOKEN") or os.environ.get("MYGIT_API_TOKEN", "")
+    if token:
+        return token
+    try:
+        with open(os.environ.get("MYGIT_TOKEN_FILE", "/opt/mygit/.ssh-token")) as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+API_TOKEN = get_token()
 
 
 def main():
