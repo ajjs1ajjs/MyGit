@@ -129,7 +129,7 @@ watch(repoId, async (id) => {
     const readmeEntry = (tr || []).find((e: any) => e.type === 'blob' && e.name.toLowerCase() === 'readme.md');
     if (readmeEntry) {
       const readmeData = await api.get(`/projects/${id}/blobs/0/?ref=${repo.value?.default_branch || 'main'}&path=${encodeURIComponent(readmeEntry.name)}`);
-      readmeContent.value = readmeData?.content || "";
+      readmeContent.value = readmeData?.encoding === "base64" ? atob(readmeData.content || "") : (readmeData?.content || "");
     } else {
       readmeContent.value = "";
     }

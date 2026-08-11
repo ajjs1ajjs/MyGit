@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/ajjs1ajjs/MyGit/internal/storage"
 )
@@ -36,21 +38,21 @@ func (a *App) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 		Title       string `json:"title"`
 		Description string `json:"description"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Title == "" {
+	if err := jsonDecode(r, &body); err != nil || body.Title == "" {
 		writeErr(w, http.StatusBadRequest, "title is required")
 		return
 	}
-	num, _ := a.Store.NextIssueNumber(repo.ID)
 	issue := &storage.Issue{
 		RepositoryID: repo.ID, AuthorID: p.UserID,
-		Title: body.Title, Description: body.Description, State: "open", Number: num,
+		Title: body.Title, Description: body.Description, State: "open",
 	}
-	id, err := a.Store.CreateIssue(issue)
+	id, num, err := a.Store.CreateIssue(issue)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "Database error")
 		return
 	}
 	issue.ID = id
+	issue.Number = num
 	writeJSON(w, http.StatusCreated, map[string]any{"issue": issue, "number": num})
 }
 
@@ -75,7 +77,7 @@ func (a *App) handleUpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	num := int(mustPathInt(r, "number"))
 	var body map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := jsonDecode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -133,7 +135,7 @@ func (a *App) handleAddIssueComment(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Body string `json:"body"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := jsonDecode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -175,7 +177,7 @@ func (a *App) handleCreateMR(w http.ResponseWriter, r *http.Request) {
 		Title        string `json:"title"`
 		Description  string `json:"description"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := jsonDecode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -183,18 +185,18 @@ func (a *App) handleCreateMR(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "source_branch, target_branch and title are required")
 		return
 	}
-	num, _ := a.Store.NextMRNumber(repo.ID)
 	mr := &storage.MergeRequest{
 		RepositoryID: repo.ID, AuthorID: p.UserID,
 		SourceBranch: body.SourceBranch, TargetBranch: body.TargetBranch,
-		Title: body.Title, Description: body.Description, State: "open", Number: num,
+		Title: body.Title, Description: body.Description, State: "open",
 	}
-	id, err := a.Store.CreateMR(mr)
+	id, num, err := a.Store.CreateMR(mr)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "Database error")
 		return
 	}
 	mr.ID = id
+	mr.Number = num
 	writeJSON(w, http.StatusCreated, map[string]any{"merge_request": mr, "number": num})
 }
 
@@ -217,22 +219,35 @@ func (a *App) handleMergeMR(w http.ResponseWriter, r *http.Request) {
 	if repo == nil {
 		return
 	}
+	// merging writes to the repo — require maintainer role (>= 40)
+	p := a.principal(r)
+	if a.Store.EffectiveRole(p.UserID, repo.ID, repo.OwnerID, p.IsSuper, repo.Visibility) < 40 {
+		writeErr(w, http.StatusForbidden, "Maintainer access required")
+		return
+	}
 	num := int(mustPathInt(r, "number"))
 	mr, err := a.Store.GetMR(repo.ID, num)
 	if err != nil || mr == nil {
 		writeErr(w, http.StatusNotFound, "Merge request not found")
 		return
 	}
+	if mr.State != "open" {
+		writeErr(w, http.StatusConflict, "Merge request is not open")
+		return
+	}
 	dir := a.repoDir(repo)
-	// perform a fast-forward merge in a temp worktree-like manner; for bare repos
-	// use update-ref to fast-forward target to source.
-	_ = mr
-	_ = dir
-	// Simple approach: merge --ff-only requires a worktree; for bare, use
-	// `git branch -f` only when target is an ancestor. Fall back to a no-ff via
-	// a temporary clone is heavy — mark merged optimistically.
-	_ = a.Store.UpdateMR(repo.ID, num, map[string]any{"state": "merged"})
-	writeJSON(w, http.StatusOK, map[string]any{"detail": "merged"})
+	sha, err := a.Git.MergeMR(dir, mr.SourceBranch, mr.TargetBranch)
+	if err != nil {
+		writeErr(w, http.StatusConflict, "Merge failed: "+err.Error())
+		return
+	}
+	if err := a.Store.UpdateMR(repo.ID, num, map[string]any{
+		"state": "merged", "merge_commit_sha": sha, "updated_at": storage.Now(),
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"detail": "merged", "merge_commit_sha": sha})
 }
 
 // --- webhooks ---
@@ -264,8 +279,15 @@ func (a *App) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
 		Events   []string `json:"events"`
 		IsActive *bool    `json:"is_active"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.URL == "" {
+	if err := jsonDecode(r, &body); err != nil || body.URL == "" {
 		writeErr(w, http.StatusBadRequest, "url is required")
+		return
+	}
+	// Only http/https webhook targets are permitted (blocks file:// and other
+	// schemes that could read local resources when webhooks are dispatched).
+	u, err := url.Parse(body.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		writeErr(w, http.StatusBadRequest, "url must be a valid http(s) URL")
 		return
 	}
 	active := 1
@@ -291,8 +313,7 @@ func (a *App) handleDeleteWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := mustPathInt(r, "hookID")
-	_ = repo
-	if err := a.Store.DeleteWebhook(id); err != nil {
+	if err := a.Store.DeleteWebhook(repo.ID, id); err != nil {
 		writeErr(w, http.StatusInternalServerError, "Database error")
 		return
 	}
@@ -315,45 +336,18 @@ func (a *App) handleNotifications(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query().Get("q")
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	p := a.principal(r)
-	repos, _ := a.Store.ListAccessibleRepos(p.UserID, p.IsSuper)
-	out := make([]map[string]any, 0)
-	for _, rp := range repos {
-		if q == "" || containsFold(rp.Name+" "+rp.Path, q) {
-			out = append(out, repoToMap(rp))
-		}
+	// Search is pushed down to SQL (LOWER(name)/LOWER(path) LIKE), so it stays
+	// fast with thousands of repos instead of scanning everything in memory.
+	repos, err := a.Store.SearchRepos(p.UserID, p.IsSuper, q)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Database error")
+		return
 	}
-	if out == nil {
-		out = []map[string]any{}
+	out := make([]map[string]any, 0, len(repos))
+	for _, rp := range repos {
+		out = append(out, repoToMap(rp))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"repositories": out})
-}
-
-func containsFold(haystack, needle string) bool {
-	hs, ns := lower(haystack), lower(needle)
-	return len(hs) >= len(ns) && containsString(hs, ns)
-}
-
-func containsString(haystack, needle string) bool {
-	return len(haystack) >= len(needle) && indexOf(haystack, needle) >= 0
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
-}
-
-func lower(s string) string {
-	b := []byte(s)
-	for i := range b {
-		if b[i] >= 'A' && b[i] <= 'Z' {
-			b[i] += 32
-		}
-	}
-	return string(b)
 }

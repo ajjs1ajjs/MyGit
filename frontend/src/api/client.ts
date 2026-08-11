@@ -1,10 +1,5 @@
 const BASE = "/api/v1";
 
-function getCookie(name: string) {
-  const v = document.cookie.match("(^|;) ?" + name + "=([^;]*)(;|$)");
-  return v ? v[2] : "";
-}
-
 async function tryRefreshToken() {
   const refresh = localStorage.getItem("refresh_token");
   if (!refresh) return false;
@@ -28,7 +23,6 @@ async function request(path: string, options: RequestInit = {}) {
   const token = localStorage.getItem("access_token");
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "X-CSRFToken": getCookie("csrftoken"),
     ...(options.headers as Record<string, string>),
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;

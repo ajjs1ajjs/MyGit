@@ -18,16 +18,17 @@ type User struct {
 	IsActive           int    `json:"is_active"`
 	IsSuperuser        int    `json:"is_superuser"`
 	MustChangePassword int    `json:"must_change_password"`
+	TokenVersion       int    `json:"-"`
 	CreatedAt          string `json:"created_at"`
 	UpdatedAt          string `json:"updated_at"`
 }
 
-const userCols = `id, username, email, password_hash, full_name, bio, is_active, is_superuser, must_change_password, created_at, updated_at`
+const userCols = `id, username, email, password_hash, full_name, bio, is_active, is_superuser, must_change_password, token_version, created_at, updated_at`
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
 	err := row.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.FullName, &u.Bio,
-		&u.IsActive, &u.IsSuperuser, &u.MustChangePassword, &u.CreatedAt, &u.UpdatedAt)
+		&u.IsActive, &u.IsSuperuser, &u.MustChangePassword, &u.TokenVersion, &u.CreatedAt, &u.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -36,9 +37,9 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 
 func (st *Store) CreateUser(u *User) (int64, error) {
 	now := Now()
-	res, err := st.DB.Exec(`INSERT INTO users (username, email, password_hash, full_name, bio, is_active, is_superuser, must_change_password, created_at, updated_at)
-	  VALUES (?,?,?,?,?,?,?,?,?,?)`, u.Username, u.Email, u.PasswordHash, u.FullName, u.Bio,
-		u.IsActive, u.IsSuperuser, u.MustChangePassword, now, now)
+	res, err := st.DB.Exec(`INSERT INTO users (username, email, password_hash, full_name, bio, is_active, is_superuser, must_change_password, token_version, created_at, updated_at)
+	  VALUES (?,?,?,?,?,?,?,?,?,?,?)`, u.Username, u.Email, u.PasswordHash, u.FullName, u.Bio,
+		u.IsActive, u.IsSuperuser, u.MustChangePassword, 0, now, now)
 	if err != nil {
 		return 0, err
 	}
@@ -55,6 +56,12 @@ func (st *Store) GetUserByEmail(email string) (*User, error) {
 
 func (st *Store) GetUserByID(id int64) (*User, error) {
 	return scanUser(st.DB.QueryRow(`SELECT `+userCols+` FROM users WHERE id = ?`, id))
+}
+
+func (st *Store) CountUsers() (int, error) {
+	var n int
+	err := st.DB.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n)
+	return n, err
 }
 
 func (st *Store) ListUsers() ([]User, error) {
@@ -102,7 +109,7 @@ func (st *Store) CreateToken(userID int64, name, hash, scopes string) (int64, er
 
 func (st *Store) GetTokenByHash(hash string) (*Token, error) {
 	var t Token
-	err := st.DB.QueryRow(`SELECT id, user_id, name, token_hash, scopes, last_used_at, expires_at, created_at
+	err := st.DB.QueryRow(`SELECT id, user_id, name, token_hash, scopes, COALESCE(last_used_at,''), COALESCE(expires_at,''), created_at
 	  FROM tokens WHERE token_hash = ?`, hash).Scan(&t.ID, &t.UserID, &t.Name, &t.TokenHash, &t.Scopes, &t.LastUsedAt, &t.ExpiresAt, &t.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -111,7 +118,7 @@ func (st *Store) GetTokenByHash(hash string) (*Token, error) {
 }
 
 func (st *Store) ListTokens(userID int64) ([]Token, error) {
-	rows, err := st.DB.Query(`SELECT id, user_id, name, token_hash, scopes, last_used_at, expires_at, created_at FROM tokens WHERE user_id = ? ORDER BY id`, userID)
+	rows, err := st.DB.Query(`SELECT id, user_id, name, token_hash, scopes, COALESCE(last_used_at,''), COALESCE(expires_at,''), created_at FROM tokens WHERE user_id = ? ORDER BY id`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -127,8 +134,8 @@ func (st *Store) ListTokens(userID int64) ([]Token, error) {
 	return out, rows.Err()
 }
 
-func (st *Store) DeleteToken(id int64) error {
-	_, err := st.DB.Exec(`DELETE FROM tokens WHERE id = ?`, id)
+func (st *Store) DeleteToken(userID, id int64) error {
+	_, err := st.DB.Exec(`DELETE FROM tokens WHERE id = ? AND user_id = ?`, id, userID)
 	return err
 }
 
@@ -172,6 +179,16 @@ func (st *Store) ListSSHKeys(userID int64) ([]SSHKey, error) {
 		out = append(out, k)
 	}
 	return out, rows.Err()
+}
+
+func (st *Store) GetSSHKeyByID(id int64) (*SSHKey, error) {
+	var k SSHKey
+	err := st.DB.QueryRow(`SELECT id, user_id, title, public_key, fingerprint, is_active, created_at FROM ssh_keys WHERE id = ?`, id).
+		Scan(&k.ID, &k.UserID, &k.Title, &k.PublicKey, &k.Fingerprint, &k.IsActive, &k.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &k, err
 }
 
 func (st *Store) DeleteSSHKey(userID, id int64) error {
@@ -254,6 +271,37 @@ func (st *Store) ListAccessibleRepos(userID int64, isSuperuser bool) ([]Reposito
 		return nil, err
 	}
 	defer rows.Close()
+	return scanRepos(rows)
+}
+
+// SearchRepos returns accessible repos whose name or path contains q
+// (case-insensitive), pushed down to SQL instead of scanning in application
+// memory.
+func (st *Store) SearchRepos(userID int64, isSuperuser bool, q string) ([]Repository, error) {
+	like := "%" + strings.ToLower(q) + "%"
+	var query string
+	var args []any
+	if isSuperuser {
+		query = `SELECT ` + repoCols + ` FROM repositories WHERE LOWER(name) LIKE ? OR LOWER(path) LIKE ? ORDER BY id DESC`
+		args = []any{like, like}
+	} else {
+		query = `SELECT DISTINCT r.` + strings.ReplaceAll(repoCols, ", ", ", r.") +
+			` FROM repositories r WHERE (LOWER(r.name) LIKE ? OR LOWER(r.path) LIKE ?)
+			   AND (r.visibility = 'public'
+			     OR r.owner_id = ?
+			     OR EXISTS (SELECT 1 FROM access a WHERE a.repository_id = r.id AND a.user_id = ? AND a.role >= 10))
+			   ORDER BY r.id DESC`
+		args = []any{like, like, userID, userID}
+	}
+	rows, err := st.DB.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRepos(rows)
+}
+
+func scanRepos(rows *sql.Rows) ([]Repository, error) {
 	var out []Repository
 	for rows.Next() {
 		var r Repository
@@ -364,21 +412,28 @@ type Issue struct {
 	UpdatedAt    string `json:"updated_at"`
 }
 
-func (st *Store) NextIssueNumber(repoID int64) (int, error) {
-	var n int
-	err := st.DB.QueryRow(`SELECT COALESCE(MAX(number),0)+1 FROM issues WHERE repository_id = ?`, repoID).Scan(&n)
-	return n, err
-}
-
-func (st *Store) CreateIssue(i *Issue) (int64, error) {
+// CreateIssue inserts an issue and assigns its per-repository number atomically
+// inside the INSERT (INSERT ... SELECT MAX+1), so two concurrent creations
+// cannot both pick the same number and trip the UNIQUE(repository_id, number)
+// constraint.
+func (st *Store) CreateIssue(i *Issue) (int64, int, error) {
 	now := Now()
 	res, err := st.DB.Exec(`INSERT INTO issues (repository_id, author_id, assignee_id, milestone_id, title, description, state, number, created_at, updated_at)
-	  VALUES (?,?,?,?,?,?,?,?,?,?)`, i.RepositoryID, i.AuthorID, i.AssigneeID, i.MilestoneID,
-		i.Title, i.Description, i.State, i.Number, now, now)
+	  SELECT ?,?,?,?,?,?,?,COALESCE(MAX(number),0)+1,?,? FROM issues WHERE repository_id = ?`,
+		i.RepositoryID, i.AuthorID, i.AssigneeID, i.MilestoneID,
+		i.Title, i.Description, i.State, now, now, i.RepositoryID)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, 0, err
+	}
+	var number int
+	if err := st.DB.QueryRow(`SELECT number FROM issues WHERE id = ?`, id).Scan(&number); err != nil {
+		return 0, 0, err
+	}
+	return id, number, nil
 }
 
 func scanIssue(row interface{ Scan(...any) error }) (*Issue, error) {
@@ -472,21 +527,26 @@ type MergeRequest struct {
 	UpdatedAt      string `json:"updated_at"`
 }
 
-func (st *Store) NextMRNumber(repoID int64) (int, error) {
-	var n int
-	err := st.DB.QueryRow(`SELECT COALESCE(MAX(number),0)+1 FROM merge_requests WHERE repository_id = ?`, repoID).Scan(&n)
-	return n, err
-}
-
-func (st *Store) CreateMR(m *MergeRequest) (int64, error) {
+// CreateMR mirrors CreateIssue: the per-repository number is assigned
+// atomically inside the INSERT to avoid MAX+1 read-modify-write races.
+func (st *Store) CreateMR(m *MergeRequest) (int64, int, error) {
 	now := Now()
 	res, err := st.DB.Exec(`INSERT INTO merge_requests (repository_id, author_id, source_branch, target_branch, title, description, state, number, merge_commit_sha, created_at, updated_at)
-	  VALUES (?,?,?,?,?,?,?,?,?,?,?)`, m.RepositoryID, m.AuthorID, m.SourceBranch, m.TargetBranch,
-		m.Title, m.Description, m.State, m.Number, m.MergeCommitSHA, now, now)
+	  SELECT ?,?,?,?,?,?,?,COALESCE(MAX(number),0)+1,?,?,? FROM merge_requests WHERE repository_id = ?`,
+		m.RepositoryID, m.AuthorID, m.SourceBranch, m.TargetBranch,
+		m.Title, m.Description, m.State, m.MergeCommitSHA, now, now, m.RepositoryID)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, 0, err
+	}
+	var number int
+	if err := st.DB.QueryRow(`SELECT number FROM merge_requests WHERE id = ?`, id).Scan(&number); err != nil {
+		return 0, 0, err
+	}
+	return id, number, nil
 }
 
 func scanMR(row interface{ Scan(...any) error }) (*MergeRequest, error) {
@@ -575,8 +635,8 @@ func (st *Store) ListWebhooks(repoID int64) ([]Webhook, error) {
 	return out, rows.Err()
 }
 
-func (st *Store) DeleteWebhook(id int64) error {
-	_, err := st.DB.Exec(`DELETE FROM webhooks WHERE id = ?`, id)
+func (st *Store) DeleteWebhook(repoID int64, id int64) error {
+	_, err := st.DB.Exec(`DELETE FROM webhooks WHERE id = ? AND (repository_id = ? OR repository_id IS NULL)`, id, repoID)
 	return err
 }
 

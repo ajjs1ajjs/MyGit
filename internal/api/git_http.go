@@ -11,6 +11,11 @@ import (
 func (a *App) gitRepoFromPath(r *http.Request) *storage.Repository {
 	owner := urlParam(r, "owner")
 	name := strings.TrimSuffix(urlParam(r, "repo"), ".git")
+	// Reject anything that isn't a plain owner/repo identifier before it can
+	// reach filepath.Join below (blocks `..`, `%2F`, `.`, backslashes, etc.).
+	if !validRepoName(owner) || !validRepoName(name) {
+		return nil
+	}
 	repo, _ := a.Store.GetRepoByPath(owner + "/" + name)
 	return repo
 }
@@ -80,14 +85,11 @@ func (a *App) handleGitRPC(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, 256<<20))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "read body failed")
-		return
-	}
 	parts := strings.Split(repo.Path, "/")
 	dir := a.Git.RepoPath(parts[0], parts[1])
-	out, err := a.Git.RPC(dir, service, body)
+	// Stream the body straight into git's stdin (capped at 256MB) instead of
+	// buffering it in memory — large pushes used to consume the whole payload.
+	out, err := a.Git.RPC(dir, service, io.LimitReader(r.Body, 256<<20))
 	if err != nil {
 		w.Header().Set("Content-Type", "application/x-git-"+strings.TrimPrefix(service, "git-")+"-result")
 		_, _ = w.Write(out)
@@ -145,7 +147,52 @@ func (a *App) handleCheckAccess(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"allowed": true})
+	allowed, err := a.checkSSHAccess(body.KeyID, body.Repo, body.Action)
+	if err != nil {
+		writeErr(w, http.StatusForbidden, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"allowed": allowed})
+}
+
+// checkSSHAccess resolves the key's owner and enforces the repo role for the
+// requested action. read requires a visible repo (role >= 10); write (push)
+// requires role >= 30.
+func (a *App) checkSSHAccess(keyID int64, repoPath, action string) (bool, error) {
+	if keyID <= 0 || repoPath == "" {
+		return false, nil
+	}
+	key, err := a.Store.GetSSHKeyByID(keyID)
+	if err != nil {
+		return false, nil
+	}
+	if key == nil || key.IsActive != 1 {
+		return false, nil
+	}
+	parts := strings.Split(strings.Trim(repoPath, "/"), "/")
+	if len(parts) < 2 {
+		return false, nil
+	}
+	owner, name := parts[0], parts[1]
+	if !validRepoName(owner) || !validRepoName(name) {
+		return false, nil
+	}
+	repo, err := a.Store.GetRepoByPath(owner + "/" + name)
+	if err != nil || repo == nil {
+		return false, nil
+	}
+	u, _ := a.Store.GetUserByID(key.UserID)
+	if u == nil || u.IsActive != 1 {
+		return false, nil
+	}
+	role := a.Store.EffectiveRole(u.ID, repo.ID, repo.OwnerID, u.IsSuperuser == 1, repo.Visibility)
+	switch action {
+	case "read", "clone", "pull":
+		return role >= 10, nil
+	case "write", "push":
+		return role >= 30, nil
+	}
+	return false, nil
 }
 
 func (a *App) handleAuthorizedKeys(w http.ResponseWriter, r *http.Request) {

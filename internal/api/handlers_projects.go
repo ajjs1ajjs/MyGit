@@ -1,10 +1,11 @@
 package api
 
 import (
-	"encoding/json"
+	"encoding/base64"
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/ajjs1ajjs/MyGit/internal/git"
 	"github.com/ajjs1ajjs/MyGit/internal/storage"
@@ -95,7 +96,7 @@ func (a *App) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		Visibility    string `json:"visibility"`
 		DefaultBranch string `json:"default_branch"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := jsonDecode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -139,6 +140,10 @@ func validRepoName(name string) bool {
 	if name == "" || len(name) > 100 {
 		return false
 	}
+	// Reject dot-segments outright; they would resolve through filepath.Join.
+	if name == "." || name == ".." || strings.HasPrefix(name, "..") {
+		return false
+	}
 	for _, c := range name {
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.') {
 			return false
@@ -160,7 +165,7 @@ func (a *App) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := jsonDecode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -315,8 +320,18 @@ func (a *App) handleBlob(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	_ = ref
 	_ = path
+	// Text blobs are returned verbatim (encoding "text"); arbitrary binary
+	// blobs are base64-encoded (encoding "base64") so they survive JSON
+	// round-tripping intact. The frontend decodes based on the field.
+	if utf8.Valid(content) && !strings.ContainsRune(string(content), '\x00') {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"content": string(content), "sha": sha,
+			"encoding": "text",
+		})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"content": string(content), "sha": sha,
+		"content": base64.StdEncoding.EncodeToString(content), "sha": sha,
 		"encoding": "base64",
 	})
 }
@@ -422,7 +437,7 @@ func (a *App) handleCreateBranch(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 		Ref  string `json:"ref"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := jsonDecode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -431,7 +446,7 @@ func (a *App) handleCreateBranch(w http.ResponseWriter, r *http.Request) {
 	if src == "" {
 		src = repo.DefaultBranch
 	}
-	if err := runGit(dir, "branch", body.Name, src); err != nil {
+	if err := a.Git.CreateBranch(dir, body.Name, src); err != nil {
 		writeErr(w, http.StatusBadRequest, "Branch creation failed")
 		return
 	}
@@ -445,7 +460,7 @@ func (a *App) handleDeleteBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	dir := a.repoDir(repo)
 	name := urlParam(r, "name")
-	if err := runGit(dir, "branch", "-D", name); err != nil {
+	if err := a.Git.DeleteBranch(dir, name); err != nil {
 		writeErr(w, http.StatusBadRequest, "Branch deletion failed")
 		return
 	}

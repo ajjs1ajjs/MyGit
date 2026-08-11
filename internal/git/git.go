@@ -1,9 +1,9 @@
 package git
 
 import (
-	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,9 +31,10 @@ func (b *Backend) RepoPath(owner, name string) string {
 // cmd builds an exec.Cmd for git, adding git's own exec-path to PATH so the
 // git-* sub-commands (git-upload-pack, git-receive-pack) resolve even when the
 // parent process PATH is minimal (e.g. from a service or test harness).
-func (b *Backend) cmd(dir string, args ...string) *exec.Cmd {
+// The returned cancel must be called (typically via defer) once the command has
+// been started so the timeout's resources are released.
+func (b *Backend) cmd(dir string, args ...string) (*exec.Cmd, context.CancelFunc) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	_ = cancel
 	c := exec.CommandContext(ctx, b.Binary, args...)
 	c.Dir = dir
 	c.Stdin = strings.NewReader("")
@@ -47,7 +48,7 @@ func (b *Backend) cmd(dir string, args ...string) *exec.Cmd {
 			)
 		}
 	}
-	return c
+	return c, cancel
 }
 
 func (b *Backend) Exists(owner, name string) bool {
@@ -96,7 +97,8 @@ func (b *Backend) Remove(owner, name string) error {
 func (b *Backend) InfoRefs(dir, service string) ([]byte, error) {
 	sub := strings.TrimPrefix(service, "git-")
 	args := []string{sub, "--stateless-rpc", "--advertise-refs", dir}
-	cmd := b.cmd(dir, args...)
+	cmd, cancel := b.cmd(dir, args...)
+	defer cancel()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("git %v: %v: %s", args, err, out)
@@ -107,11 +109,12 @@ func (b *Backend) InfoRefs(dir, service string) ([]byte, error) {
 }
 
 // RPC streams the request body to git upload-pack/receive-pack and returns stdout.
-func (b *Backend) RPC(dir, service string, input []byte) ([]byte, error) {
+func (b *Backend) RPC(dir, service string, input io.Reader) ([]byte, error) {
 	sub := strings.TrimPrefix(service, "git-")
 	args := []string{sub, "--stateless-rpc", dir}
-	cmd := b.cmd(dir, args...)
-	cmd.Stdin = bytes.NewReader(input)
+	cmd, cancel := b.cmd(dir, args...)
+	defer cancel()
+	cmd.Stdin = input
 	return cmd.CombinedOutput()
 }
 
@@ -123,7 +126,9 @@ func pktLine(s string) string {
 // --- metadata ---
 
 func run(binary, dir string, args ...string) (string, error) {
-	cmd := exec.Command(binary, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -221,13 +226,14 @@ func (b *Backend) Blob(dir, ref, path string) ([]byte, error) {
 	if path != "" {
 		target = ref + ":" + path
 	}
-	cmd := exec.Command(b.Binary, "cat-file", "blob", target)
-	cmd.Dir = dir
+	cmd, cancel := b.cmd(dir, "cat-file", "blob", target)
+	defer cancel()
 	return cmd.Output()
 }
 
 func (b *Backend) BlobAtSHA(dir, sha string) ([]byte, error) {
-	cmd := b.cmd(dir, "cat-file", "blob", sha)
+	cmd, cancel := b.cmd(dir, "cat-file", "blob", sha)
+	defer cancel()
 	return cmd.Output()
 }
 
@@ -330,6 +336,88 @@ func (b *Backend) RefSHA(dir, ref string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// CreateBranch creates branch name pointing at src. Both names are validated so
+// a user-supplied value can never be interpreted as a git option.
+func (b *Backend) CreateBranch(dir, name, src string) error {
+	if !b.ValidRef(name) || !b.ValidRef(src) {
+		return fmt.Errorf("invalid branch name")
+	}
+	cmd, cancel := b.cmd(dir, "branch", name, src)
+	defer cancel()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git branch: %v: %s", err, out)
+	}
+	return nil
+}
+
+// DeleteBranch deletes branch name (validated against option injection).
+func (b *Backend) DeleteBranch(dir, name string) error {
+	if !b.ValidRef(name) {
+		return fmt.Errorf("invalid branch name")
+	}
+	cmd, cancel := b.cmd(dir, "branch", "-D", name)
+	defer cancel()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git branch: %v: %s", err, out)
+	}
+	return nil
+}
+
+// ValidRef returns true if ref is a safe git ref name. Guarding against branch
+// names that start with "-" prevents git option injection, and check-ref-format
+// rejects any name that could escape the ref namespace.
+func (b *Backend) ValidRef(ref string) bool {
+	if ref == "" || strings.HasPrefix(ref, "-") {
+		return false
+	}
+	if _, err := run(b.Binary, "", "check-ref-format", "--branch", ref); err != nil {
+		return false
+	}
+	return true
+}
+
+// MergeMR merges sourceBranch into targetBranch of the bare repo at dir and
+// returns the resulting SHA of targetBranch. It performs the merge in an
+// isolated temporary clone so bare repositories don't need a permanent
+// worktree. Fast-forwards when possible; otherwise creates a merge commit.
+func (b *Backend) MergeMR(dir, sourceBranch, targetBranch string) (string, error) {
+	if !b.ValidRef(sourceBranch) || !b.ValidRef(targetBranch) {
+		return "", fmt.Errorf("invalid branch name")
+	}
+	tmp, err := os.MkdirTemp("", "mygit-merge-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmp)
+
+	// init a scratch clone and fetch both branches from the bare repo.
+	if out, err := run(b.Binary, tmp, "init", "-q"); err != nil {
+		return "", fmt.Errorf("git init: %v: %s", err, out)
+	}
+	if out, err := run(b.Binary, tmp, "remote", "add", "origin", dir); err != nil {
+		return "", fmt.Errorf("git remote add: %v: %s", err, out)
+	}
+	if _, err := run(b.Binary, tmp, "fetch", "-q", "origin", sourceBranch+":"+sourceBranch, targetBranch+":"+targetBranch); err != nil {
+		return "", fmt.Errorf("git fetch: %w", err)
+	}
+	if out, err := run(b.Binary, tmp, "checkout", "-q", targetBranch); err != nil {
+		return "", fmt.Errorf("git checkout: %v: %s", err, out)
+	}
+	// merge with a non-fast-forward merge commit, aborting on conflicts.
+	if out, err := run(b.Binary, tmp, "merge", "--no-ff", "-m",
+		fmt.Sprintf("Merge branch '%s' into '%s'", sourceBranch, targetBranch), sourceBranch); err != nil {
+		return "", fmt.Errorf("git merge: %v: %s", err, out)
+	}
+	if out, err := run(b.Binary, tmp, "push", "-q", "origin", "HEAD:"+targetBranch); err != nil {
+		return "", fmt.Errorf("git push: %v: %s", err, out)
+	}
+	sha, err := b.RefSHA(dir, targetBranch)
+	if err != nil {
+		return "", err
+	}
+	return sha, nil
 }
 
 func nonEmptyLines(s string) []string {

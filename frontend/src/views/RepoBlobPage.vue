@@ -170,7 +170,7 @@ watch(repoId, async (id) => {
     let url = `/projects/${id}/blobs/${sha}/?ref=${refParam}`;
     if (filePath) url += `&path=${encodeURIComponent(filePath)}`;
     const data = await api.get(url);
-    content.value = data?.content || "";
+    content.value = data?.encoding === "base64" ? atob(data.content || "") : (data?.content || "");
     lines.value = content.value.split("\n").length;
   } catch (e: any) {
     error.value = e.message;

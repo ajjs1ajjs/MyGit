@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS users (
   is_active INTEGER DEFAULT 1,
   is_superuser INTEGER DEFAULT 0,
   must_change_password INTEGER DEFAULT 0,
+  token_version INTEGER DEFAULT 0,
   created_at TEXT, updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS ssh_keys (
@@ -218,7 +219,41 @@ func Open(path string) (*sql.DB, string, error) {
 	if _, err := db.Exec(Schema); err != nil {
 		return nil, abs, fmt.Errorf("apply schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		return nil, abs, fmt.Errorf("migrate: %w", err)
+	}
 	return db, abs, nil
+}
+
+// migrate applies additive schema changes to databases created by older
+// versions. Each step must be idempotent.
+func migrate(db *sql.DB) error {
+	if err := addColumnIfMissing(db, "users", "token_version", "INTEGER DEFAULT 0"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func addColumnIfMissing(db *sql.DB, table, column, ddl string) error {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, ddl))
+	return err
 }
 
 func Now() string {

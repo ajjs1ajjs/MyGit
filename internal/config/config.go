@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/mattn/go-isatty"
 )
 
 type Config struct {
@@ -72,6 +74,9 @@ func (c *Config) EnsureJWTSecret() (string, error) {
 }
 
 // EnsureInternalToken returns the internal machine token (for git hooks/CI).
+// The auto-generated token is only echoed to stderr on an interactive terminal;
+// service/logged deployments must set MYGIT_INTERNAL_API_TOKEN explicitly to
+// avoid leaking the secret into logs.
 func (c *Config) EnsureInternalToken() (string, error) {
 	if c.InternalToken != "" {
 		return c.InternalToken, nil
@@ -81,7 +86,9 @@ func (c *Config) EnsureInternalToken() (string, error) {
 		return "", err
 	}
 	c.InternalToken = token
-	fmt.Fprintf(os.Stderr, "MYGIT_INTERNAL_API_TOKEN=%s\n", token)
+	if isatty.IsTerminal(os.Stderr.Fd()) {
+		fmt.Fprintf(os.Stderr, "MYGIT_INTERNAL_API_TOKEN=%s\n", token)
+	}
 	return c.InternalToken, nil
 }
 

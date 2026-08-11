@@ -57,10 +57,11 @@ func (a *App) Handler() http.Handler {
 	r.With(a.withInternal).Post("/api/v1/internal/check_access", a.handleCheckAccess)
 	r.With(a.withInternal).Get("/api/v1/internal/authorized_keys", a.handleAuthorizedKeys)
 
-	// auth
-	r.Post("/api/v1/auth/register/", a.handleRegister)
-	r.Post("/api/v1/auth/login/", a.handleLogin)
-	r.Post("/api/v1/auth/refresh/", a.handleRefresh)
+	// auth (rate-limited to slow down brute force / credential stuffing)
+	authLimiter := newRateLimiter(10, time.Minute)
+	r.With(a.withRateLimit(authLimiter)).Post("/api/v1/auth/register/", a.handleRegister)
+	r.With(a.withRateLimit(authLimiter)).Post("/api/v1/auth/login/", a.handleLogin)
+	r.With(a.withRateLimit(authLimiter)).Post("/api/v1/auth/refresh/", a.handleRefresh)
 
 	// users
 	r.Route("/api/v1/users", func(r chi.Router) {
@@ -159,7 +160,16 @@ func (a *App) authenticate(r *http.Request) (*principal, error) {
 	if strings.HasPrefix(authz, "Bearer ") {
 		token := strings.TrimPrefix(authz, "Bearer ")
 		if claims, err := a.Auth.Parse(token, "access"); err == nil {
-			return &principal{UserID: claims.UserID, Username: claims.Username, Method: "jwt"}, nil
+			// Reject tokens whose token_version is stale (e.g. after a password
+			// change), giving us server-side JWT revocation.
+			u, _ := a.Store.GetUserByID(claims.UserID)
+			if u == nil || u.IsActive != 1 {
+				return nil, errors.New("user not found")
+			}
+			if claims.Ver != int64(u.TokenVersion) {
+				return nil, errors.New("token has been revoked")
+			}
+			return &principal{UserID: claims.UserID, Username: claims.Username, IsSuper: u.IsSuperuser == 1, Method: "jwt"}, nil
 		}
 		if pat, err := a.Store.GetTokenByHash(auth.HashToken(token)); err == nil && pat != nil {
 			a.Store.TouchToken(pat.ID)
@@ -222,6 +232,13 @@ func (a *App) withSecurity(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		// Vue injects some styles via inline style attributes; scripts are fully
+		// bundled so 'self' is sufficient for script-src.
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "+
+				"frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 		next.ServeHTTP(w, r)
 	})
 }

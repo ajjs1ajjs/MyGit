@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -213,6 +214,254 @@ func TestEmptyListsAreArrays(t *testing.T) {
 	}
 	if strings.Contains(string(b), `"results":null`) {
 		t.Fatalf("empty projects returned null: %s", b)
+	}
+}
+
+// TestSecondUserIsNotSuperuser guards the authorization model: only the first
+// registered user may be promoted to superuser.
+func TestSecondUserIsNotSuperuser(t *testing.T) {
+	_, base, _ := newTestApp(t)
+
+	// first user -> superuser
+	resp, b := authReq("GET", base+"/api/v1/users/me/", registerAndLogin(t, base), nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(b), `"is_superuser":true`) {
+		t.Fatalf("first user should be superuser: %d %s", resp.StatusCode, b)
+	}
+
+	// second user -> regular
+	resp2, err := http.Post(base+"/api/v1/auth/register/", "application/json",
+		strings.NewReader(`{"username":"bob","email":"bob@example.com","password":"password123"}`))
+	if err != nil {
+		t.Fatalf("register bob: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != 201 {
+		b, _ := io.ReadAll(resp2.Body)
+		t.Fatalf("register bob = %d: %s", resp2.StatusCode, b)
+	}
+	var login struct {
+		Access string `json:"access"`
+	}
+	_ = json.NewDecoder(resp2.Body).Decode(&login)
+	resp3, b := authReq("GET", base+"/api/v1/users/me/", login.Access, nil)
+	if resp3.StatusCode != 200 {
+		t.Fatalf("me bob = %d", resp3.StatusCode)
+	}
+	if strings.Contains(string(b), `"is_superuser":true`) {
+		t.Fatalf("second user must not be superuser: %s", b)
+	}
+}
+
+// TestCannotDeleteOthersToken guards against the IDOR where any authenticated
+// user could delete another user's PAT by guessing its id.
+func TestCannotDeleteOthersToken(t *testing.T) {
+	_, base, _ := newTestApp(t)
+	aliceToken := registerAndLogin(t, base)
+
+	// alice creates a token -> get its id
+	resp, b := authReq("POST", base+"/api/v1/users/alice/tokens/", aliceToken, map[string]any{"name": "ci", "scopes": []string{"read"}})
+	if resp.StatusCode != 201 {
+		t.Fatalf("create token = %d: %s", resp.StatusCode, b)
+	}
+	var created map[string]any
+	_ = json.Unmarshal(b, &created)
+	tokenID := created["id"]
+	rawPAT, _ := created["token"].(string)
+	if rawPAT == "" {
+		t.Fatalf("create token did not return raw token: %s", b)
+	}
+
+	// the raw PAT must authenticate (regression: NULL last_used_at/expires_at
+	// used to break token lookup on a fresh token)
+	resp, b = authReq("GET", base+"/api/v1/users/me/", rawPAT, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "alice") {
+		t.Fatalf("PAT auth failed: %d %s", resp.StatusCode, b)
+	}
+
+	// bob registers and tries to delete alice's token
+	http.Post(base+"/api/v1/auth/register/", "application/json",
+		strings.NewReader(`{"username":"bob","email":"bob@example.com","password":"password123"}`))
+	var login struct {
+		Access string `json:"access"`
+	}
+	respLogin, err := http.Post(base+"/api/v1/auth/login/", "application/json",
+		strings.NewReader(`{"username":"bob","password":"password123"}`))
+	if err != nil {
+		t.Fatalf("bob login: %v", err)
+	}
+	defer respLogin.Body.Close()
+	_ = json.NewDecoder(respLogin.Body).Decode(&login)
+
+	path := fmt.Sprintf("%s/api/v1/users/alice/tokens/%v/", base, tokenID)
+	resp, b = authReq("DELETE", path, login.Access, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("bob delete = %d: %s", resp.StatusCode, b)
+	}
+
+	// alice's token must still be listed
+	resp, b = authReq("GET", base+"/api/v1/users/alice/tokens/", aliceToken, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("list tokens = %d", resp.StatusCode)
+	}
+	if !strings.Contains(string(b), "ci") {
+		t.Fatalf("alice's token was deleted by bob: %s", b)
+	}
+}
+
+// TestGitRepoPathTraversal guards gitRepoFromPath against path traversal via
+// owner/repo URL parameters (../, %2F, encoded dots). The invariant is that a
+// traversal attempt must never yield a git smart-HTTP advertisement (a 200
+// with application/x-git content / "# service=git-" body). It may hit the SPA
+// fallback (harmless static HTML), but never a git operation.
+func TestGitRepoPathTraversal(t *testing.T) {
+	_, base, _ := newTestApp(t)
+	for _, attempt := range []string{
+		"/../etc/info/refs?service=git-upload-pack",
+		"/..%2F..%2Fetc/info/refs?service=git-upload-pack",
+		"/%2e%2e/%2e%2e/etc/info/refs?service=git-upload-pack",
+		"/alice/%2e%2e/info/refs?service=git-upload-pack",
+		"/../etc/git-upload-pack",
+	} {
+		resp, err := http.Get(base + attempt)
+		if err != nil {
+			t.Fatalf("GET %s: %v", attempt, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if strings.Contains(resp.Header.Get("Content-Type"), "application/x-git") {
+			t.Fatalf("traversal %s leaked a git advertisement (status %d): %s", attempt, resp.StatusCode, body)
+		}
+		if strings.Contains(string(body), "# service=git-") {
+			t.Fatalf("traversal %s leaked a git advertisement body: %s", attempt, body)
+		}
+	}
+}
+
+// TestIssueNumbersAreSequential ensures the atomic MAX+1 insert keeps
+// per-repository issue numbers unique and monotonic across creations.
+func TestIssueNumbersAreSequential(t *testing.T) {
+	_, base, _ := newTestApp(t)
+	token := registerAndLogin(t, base)
+	authReq("POST", base+"/api/v1/projects/", token, map[string]any{"name": "seq"})
+
+	for i := 1; i <= 5; i++ {
+		resp, b := authReq("POST", base+"/api/v1/projects/1/issues/", token, map[string]any{"title": "issue"})
+		if resp.StatusCode != 201 {
+			t.Fatalf("create issue %d = %d: %s", i, resp.StatusCode, b)
+		}
+		var created map[string]any
+		_ = json.Unmarshal(b, &created)
+		if created["number"] != float64(i) {
+			t.Fatalf("issue %d number = %v, want %d", i, created["number"], i)
+		}
+	}
+}
+
+// TestTokenRevocationOnPasswordChange guards JWT revocation: after a password
+// change the user's token_version is bumped, so previously issued access tokens
+// must be rejected.
+func TestTokenRevocationOnPasswordChange(t *testing.T) {
+	_, base, _ := newTestApp(t)
+	token := registerAndLogin(t, base)
+
+	// sanity: old token works
+	resp, _ := authReq("GET", base+"/api/v1/users/me/", token, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("me before change = %d", resp.StatusCode)
+	}
+
+	// change password (bumps token_version)
+	resp, b := authReq("POST", base+"/api/v1/users/change_password/", token, map[string]any{
+		"current_password": "password123", "new_password": "newpass45678",
+	})
+	if resp.StatusCode != 200 {
+		t.Fatalf("change password = %d: %s", resp.StatusCode, b)
+	}
+
+	// old access token must now be rejected
+	resp, b = authReq("GET", base+"/api/v1/users/me/", token, nil)
+	if resp.StatusCode != 401 {
+		t.Fatalf("old token after password change = %d, want 401 (%s)", resp.StatusCode, b)
+	}
+
+	// login with new password issues a working token
+	var login struct {
+		Access string `json:"access"`
+	}
+	respLogin, err := http.Post(base+"/api/v1/auth/login/", "application/json",
+		strings.NewReader(`{"username":"alice","password":"newpass45678"}`))
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	defer respLogin.Body.Close()
+	_ = json.NewDecoder(respLogin.Body).Decode(&login)
+	resp, b = authReq("GET", base+"/api/v1/users/me/", login.Access, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("new token after change = %d: %s", resp.StatusCode, b)
+	}
+}
+
+// gitCmd runs a git command and fails the test on error.
+func gitCmd(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+	return string(out)
+}
+
+// TestMergeMR creates a real feature branch, opens a merge request against main
+// and verifies that merging produces a merge commit on the target branch (this
+// used to be a no-op that only flipped the DB state).
+func TestMergeMR(t *testing.T) {
+	_, base, repoRoot := newTestApp(t)
+	token := registerAndLogin(t, base)
+	authReq("POST", base+"/api/v1/projects/", token, map[string]any{"name": "merge-me"})
+
+	repoDir := filepath.Join(repoRoot, "alice", "merge-me.git")
+
+	// clone the bare repo, make commits on main and a feature branch
+	work := t.TempDir()
+	gitCmd(t, work, "clone", "-q", repoDir, filepath.Join(work, "wc"))
+	wc := filepath.Join(work, "wc")
+	gitCmd(t, wc, "config", "user.email", "alice@example.com")
+	gitCmd(t, wc, "config", "user.name", "alice")
+	gitCmd(t, wc, "checkout", "-q", "-b", "main")
+	os.WriteFile(filepath.Join(wc, "a.txt"), []byte("hello"), 0o644)
+	gitCmd(t, wc, "add", ".")
+	gitCmd(t, wc, "commit", "-q", "-m", "initial")
+	gitCmd(t, wc, "push", "-q", "-u", "origin", "main")
+
+	// feature branch with a new commit
+	gitCmd(t, wc, "checkout", "-q", "-b", "feature")
+	os.WriteFile(filepath.Join(wc, "b.txt"), []byte("world"), 0o644)
+	gitCmd(t, wc, "add", ".")
+	gitCmd(t, wc, "commit", "-q", "-m", "feature work")
+	gitCmd(t, wc, "push", "-q", "-u", "origin", "feature")
+
+	// open a merge request feature -> main
+	resp, b := authReq("POST", base+"/api/v1/projects/1/merge_requests/", token, map[string]any{
+		"source_branch": "feature", "target_branch": "main", "title": "merge feature",
+	})
+	if resp.StatusCode != 201 {
+		t.Fatalf("create MR = %d: %s", resp.StatusCode, b)
+	}
+
+	// merge it
+	resp, b = authReq("POST", base+"/api/v1/projects/1/merge_requests/1/merge/", token, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("merge MR = %d: %s", resp.StatusCode, b)
+	}
+
+	// target branch must now contain the feature commit (real merge, not a stub)
+	// --no-ff creates a merge commit, so check ancestry rather than SHA equality.
+	gitCmd(t, repoDir, "merge-base", "--is-ancestor", "feature", "main")
+	ancestryLog := gitCmd(t, repoDir, "log", "--oneline", "main")
+	if !strings.Contains(ancestryLog, "Merge branch 'feature'") {
+		t.Fatalf("expected a merge commit on main, got log:\n%s", ancestryLog)
 	}
 }
 

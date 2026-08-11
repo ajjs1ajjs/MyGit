@@ -18,7 +18,7 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := jsonDecode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -36,11 +36,11 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 		email = username + "@mygit.local"
 	}
 	if existing, _ := a.Store.GetUserByUsername(username); existing != nil {
-		writeErr(w, http.StatusBadRequest, "Username already exists")
+		writeErr(w, http.StatusBadRequest, "Registration failed")
 		return
 	}
 	if existing, _ := a.Store.GetUserByEmail(email); existing != nil {
-		writeErr(w, http.StatusBadRequest, "Email already registered")
+		writeErr(w, http.StatusBadRequest, "Registration failed")
 		return
 	}
 	hash, err := auth.HashPassword(body.Password)
@@ -48,15 +48,26 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "Hashing failed")
 		return
 	}
+	// Only the first registered user becomes superuser (bootstrap); everyone
+	// else registers as a regular user to preserve the authorization model.
+	count, err := a.Store.CountUsers()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	isSuperuser := 0
+	if count == 0 {
+		isSuperuser = 1
+	}
 	id, err := a.Store.CreateUser(&storage.User{
 		Username: username, Email: email, PasswordHash: hash,
-		FullName: username, IsActive: 1, IsSuperuser: 1,
+		FullName: username, IsActive: 1, IsSuperuser: isSuperuser,
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "Database error")
 		return
 	}
-	access, refresh, _ := a.Auth.TokenPair(id, username)
+	access, refresh, _ := a.Auth.TokenPair(id, username, 0)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"access": access, "refresh": refresh,
 		"user": map[string]any{"id": id, "username": username, "email": body.Email},
@@ -69,7 +80,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := jsonDecode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -89,7 +100,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "Account is disabled")
 		return
 	}
-	access, refresh, _ := a.Auth.TokenPair(u.ID, u.Username)
+	access, refresh, _ := a.Auth.TokenPair(u.ID, u.Username, int64(u.TokenVersion))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"access": access, "refresh": refresh,
 		"user": map[string]any{
@@ -104,7 +115,7 @@ func (a *App) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Refresh string `json:"refresh"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := jsonDecode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -113,7 +124,18 @@ func (a *App) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "Invalid refresh token")
 		return
 	}
-	access, refresh, _ := a.Auth.TokenPair(claims.UserID, claims.Username)
+	// Reject stale refresh tokens and re-issue with the user's current
+	// token_version (password changes bump the version, revoking old tokens).
+	u, _ := a.Store.GetUserByID(claims.UserID)
+	if u == nil || u.IsActive != 1 {
+		writeErr(w, http.StatusUnauthorized, "Invalid refresh token")
+		return
+	}
+	if claims.Ver != int64(u.TokenVersion) {
+		writeErr(w, http.StatusUnauthorized, "Refresh token has been revoked")
+		return
+	}
+	access, refresh, _ := a.Auth.TokenPair(claims.UserID, claims.Username, int64(u.TokenVersion))
 	writeJSON(w, http.StatusOK, map[string]any{"access": access, "refresh": refresh})
 }
 
@@ -135,7 +157,7 @@ func (a *App) handleMe(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 	p := a.principal(r)
 	var body map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := jsonDecode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -159,7 +181,7 @@ func (a *App) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		CurrentPassword string `json:"current_password"`
 		NewPassword     string `json:"new_password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := jsonDecode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -181,6 +203,10 @@ func (a *App) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "Hashing failed")
 		return
 	}
+	// Bumping token_version invalidates every previously issued access and
+	// refresh token for this user, so a leaked token cannot outlive a password
+	// change. Requires the column to have been read above; increment atomically.
+	_, _ = a.Store.DB.Exec(`UPDATE users SET token_version = token_version + 1 WHERE id = ?`, u.ID)
 	_ = a.Store.UpdateUser(u.ID, map[string]any{"password_hash": hash, "must_change_password": 0})
 	writeJSON(w, http.StatusOK, map[string]any{"detail": "password changed"})
 }
@@ -224,7 +250,7 @@ func (a *App) handleAddKey(w http.ResponseWriter, r *http.Request) {
 		Title     string `json:"title"`
 		PublicKey string `json:"public_key"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := jsonDecode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
@@ -276,11 +302,16 @@ func (a *App) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		Name   string   `json:"name"`
 		Scopes []string `json:"scopes"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := jsonDecode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
-	raw := "mygit_pat_" + auth.RandomToken(32)
+	rawToken, err := auth.RandomToken(32)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Token generation failed")
+		return
+	}
+	raw := "mygit_pat_" + rawToken
 	hash := auth.HashToken(raw)
 	scopes := "[]"
 	if body.Scopes != nil {
@@ -298,8 +329,7 @@ func (a *App) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleDeleteToken(w http.ResponseWriter, r *http.Request) {
 	p := a.principal(r)
 	id := mustPathInt(r, "tokenID")
-	_ = p
-	if err := a.Store.DeleteToken(id); err != nil {
+	if err := a.Store.DeleteToken(p.UserID, id); err != nil {
 		writeErr(w, http.StatusInternalServerError, "Database error")
 		return
 	}

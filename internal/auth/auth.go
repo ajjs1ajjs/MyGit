@@ -16,6 +16,7 @@ type Claims struct {
 	UserID   int64  `json:"uid"`
 	Username string `json:"username"`
 	Type     string `json:"typ"` // access | refresh
+	Ver      int64  `json:"ver"` // token_version, enables server-side invalidation
 	jwt.RegisteredClaims
 }
 
@@ -37,9 +38,9 @@ func New(secret string, accessMin int, refreshDays int) *Auth {
 	return &Auth{Secret: []byte(secret), AccessExpire: access, RefreshExpire: refresh}
 }
 
-func (a *Auth) TokenPair(userID int64, username string) (access, refresh string, err error) {
+func (a *Auth) TokenPair(userID int64, username string, ver int64) (access, refresh string, err error) {
 	now := time.Now()
-	access, err = a.sign(Claims{UserID: userID, Username: username, Type: "access",
+	access, err = a.sign(Claims{UserID: userID, Username: username, Type: "access", Ver: ver,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject: username, IssuedAt: jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(a.AccessExpire)),
@@ -47,7 +48,7 @@ func (a *Auth) TokenPair(userID int64, username string) (access, refresh string,
 	if err != nil {
 		return
 	}
-	refresh, err = a.sign(Claims{UserID: userID, Username: username, Type: "refresh",
+	refresh, err = a.sign(Claims{UserID: userID, Username: username, Type: "refresh", Ver: ver,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject: username, IssuedAt: jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(a.RefreshExpire)),
@@ -91,10 +92,12 @@ func HashToken(raw string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func RandomToken(n int) string {
+func RandomToken(n int) (string, error) {
 	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	return base64.URLEncoding.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(b), nil
 }
 
 func CheckPasswordPolicy(pw string) bool {
