@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -462,6 +463,60 @@ func TestMergeMR(t *testing.T) {
 	ancestryLog := gitCmd(t, repoDir, "log", "--oneline", "main")
 	if !strings.Contains(ancestryLog, "Merge branch 'feature'") {
 		t.Fatalf("expected a merge commit on main, got log:\n%s", ancestryLog)
+	}
+}
+
+// TestCookieSession verifies the SPA flow: login sets HttpOnly session cookies
+// and authenticated requests work via the cookie jar (no Authorization header).
+func TestCookieSession(t *testing.T) {
+	_, base, _ := newTestApp(t)
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+
+	regBody := `{"username":"cookie_user","email":"cookie@example.com","password":"password123"}`
+	resp, err := client.Post(base+"/api/v1/auth/register/", "application/json", strings.NewReader(regBody))
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 201 {
+		t.Fatalf("register = %d", resp.StatusCode)
+	}
+	// cookies must be HttpOnly (not readable by JS)
+	for _, c := range resp.Cookies() {
+		if !c.HttpOnly {
+			t.Fatalf("cookie %q must be HttpOnly", c.Name)
+		}
+		if c.SameSite != http.SameSiteStrictMode {
+			t.Fatalf("cookie %q must be SameSite=Strict", c.Name)
+		}
+	}
+
+	// /me authenticates via cookies alone
+	req, _ := http.NewRequest("GET", base+"/api/v1/users/me/", nil)
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("me: %v", err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "cookie_user") {
+		t.Fatalf("cookie /me = %d: %s", resp.StatusCode, b)
+	}
+
+	// logout clears the session
+	resp, err = client.Post(base+"/api/v1/auth/logout/", "application/json", nil)
+	if err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	resp.Body.Close()
+	resp, err = client.Get(base + "/api/v1/users/me/")
+	if err != nil {
+		t.Fatalf("me after logout: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 401 {
+		t.Fatalf("me after logout = %d, want 401", resp.StatusCode)
 	}
 }
 

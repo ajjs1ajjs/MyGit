@@ -18,6 +18,8 @@ type Config struct {
 	RefreshExpireDays int
 	InternalToken     string
 	GitBinary         string
+	TLSCert           string
+	TLSKey            string
 	BaseDir           string
 }
 
@@ -36,6 +38,8 @@ func Default() *Config {
 		RefreshExpireDays: 30,
 		InternalToken:     os.Getenv("MYGIT_INTERNAL_API_TOKEN"),
 		GitBinary:         envOr("MYGIT_GIT_BINARY", "git"),
+		TLSCert:           os.Getenv("MYGIT_TLS_CERT"),
+		TLSKey:            os.Getenv("MYGIT_TLS_KEY"),
 		BaseDir:           base,
 	}
 }

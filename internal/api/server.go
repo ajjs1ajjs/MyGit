@@ -62,6 +62,7 @@ func (a *App) Handler() http.Handler {
 	r.With(a.withRateLimit(authLimiter)).Post("/api/v1/auth/register/", a.handleRegister)
 	r.With(a.withRateLimit(authLimiter)).Post("/api/v1/auth/login/", a.handleLogin)
 	r.With(a.withRateLimit(authLimiter)).Post("/api/v1/auth/refresh/", a.handleRefresh)
+	r.Post("/api/v1/auth/logout/", a.handleLogout)
 
 	// users
 	r.Route("/api/v1/users", func(r chi.Router) {
@@ -195,6 +196,16 @@ func (a *App) authenticate(r *http.Request) (*principal, error) {
 			}
 		}
 		return nil, errors.New("invalid credentials")
+	}
+	// HttpOnly session cookie (SPA). Checked last so programmatic clients that
+	// send an explicit Authorization header take precedence.
+	if c, err := r.Cookie(cookieAccess); err == nil {
+		if claims, err := a.Auth.Parse(c.Value, "access"); err == nil {
+			u, _ := a.Store.GetUserByID(claims.UserID)
+			if u != nil && u.IsActive == 1 && claims.Ver == int64(u.TokenVersion) {
+				return &principal{UserID: u.ID, Username: u.Username, IsSuper: u.IsSuperuser == 1, Method: "cookie"}, nil
+			}
+		}
 	}
 	return nil, errors.New("not authenticated")
 }

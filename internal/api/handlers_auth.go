@@ -12,6 +12,26 @@ import (
 	"github.com/ajjs1ajjs/MyGit/internal/storage"
 )
 
+const (
+	cookieAccess  = "mygit_access"
+	cookieRefresh = "mygit_refresh"
+)
+
+// setAuthCookies stores the session in HttpOnly cookies so the SPA never has to
+// keep JWTs in localStorage (XSS can no longer exfiltrate a long-lived token).
+// SameSite=Strict blocks cross-site sending, mitigating CSRF. Secure is only
+// enabled over TLS so plain-http dev keeps working.
+func (a *App) setAuthCookies(w http.ResponseWriter, r *http.Request, access, refresh string) {
+	secure := r.TLS != nil
+	http.SetCookie(w, &http.Cookie{Name: cookieAccess, Value: access, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: cookieRefresh, Value: refresh, Path: "/api/v1/auth", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
+}
+
+func (a *App) clearAuthCookies(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: cookieAccess, Value: "", Path: "/", HttpOnly: true, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: cookieRefresh, Value: "", Path: "/api/v1/auth", HttpOnly: true, MaxAge: -1})
+}
+
 func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Username string `json:"username"`
@@ -68,6 +88,7 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	access, refresh, _ := a.Auth.TokenPair(id, username, 0)
+	a.setAuthCookies(w, r, access, refresh)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"access": access, "refresh": refresh,
 		"user": map[string]any{"id": id, "username": username, "email": body.Email},
@@ -101,6 +122,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	access, refresh, _ := a.Auth.TokenPair(u.ID, u.Username, int64(u.TokenVersion))
+	a.setAuthCookies(w, r, access, refresh)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"access": access, "refresh": refresh,
 		"user": map[string]any{
@@ -119,7 +141,19 @@ func (a *App) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
-	claims, err := a.Auth.Parse(body.Refresh, "refresh")
+	// Accept the refresh token from the HttpOnly cookie (SPA) or the request
+	// body (programmatic clients).
+	refreshToken := body.Refresh
+	if refreshToken == "" {
+		if c, err := r.Cookie(cookieRefresh); err == nil {
+			refreshToken = c.Value
+		}
+	}
+	if refreshToken == "" {
+		writeErr(w, http.StatusUnauthorized, "Invalid refresh token")
+		return
+	}
+	claims, err := a.Auth.Parse(refreshToken, "refresh")
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, "Invalid refresh token")
 		return
@@ -136,7 +170,16 @@ func (a *App) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	access, refresh, _ := a.Auth.TokenPair(claims.UserID, claims.Username, int64(u.TokenVersion))
+	a.setAuthCookies(w, r, access, refresh)
 	writeJSON(w, http.StatusOK, map[string]any{"access": access, "refresh": refresh})
+}
+
+// handleLogout clears the session cookies. Server-side revocation of a stolen
+// token is handled by token_version on password change; this endpoint clears
+// the browser session.
+func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
+	a.clearAuthCookies(w)
+	writeJSON(w, http.StatusOK, map[string]any{"detail": "logged out"})
 }
 
 func (a *App) handleMe(w http.ResponseWriter, r *http.Request) {

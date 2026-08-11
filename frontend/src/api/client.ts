@@ -1,37 +1,30 @@
 const BASE = "/api/v1";
 
-async function tryRefreshToken() {
-  const refresh = localStorage.getItem("refresh_token");
-  if (!refresh) return false;
+// The session lives in HttpOnly cookies set by the server, so there is nothing
+// to keep in localStorage that an XSS payload could read.
+async function refreshSession(): Promise<boolean> {
   try {
     const res = await fetch(`${BASE}/auth/refresh/`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh }),
+      credentials: "include",
     });
-    if (!res.ok) return false;
-    const data = await res.json();
-    localStorage.setItem("access_token", data.access);
-    if (data.refresh) localStorage.setItem("refresh_token", data.refresh);
-    return true;
+    return res.ok;
   } catch {
     return false;
   }
 }
 
 async function request(path: string, options: RequestInit = {}) {
-  const token = localStorage.getItem("access_token");
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  let res = await fetch(`${BASE}${path}`, { ...options, headers });
-  if (res.status === 401 && token) {
-    const refreshed = await tryRefreshToken();
+  let res = await fetch(`${BASE}${path}`, { ...options, headers, credentials: "include" });
+  if (res.status === 401) {
+    const refreshed = await refreshSession();
     if (refreshed) {
-      headers["Authorization"] = `Bearer ${localStorage.getItem("access_token")}`;
-      res = await fetch(`${BASE}${path}`, { ...options, headers });
+      res = await fetch(`${BASE}${path}`, { ...options, headers, credentials: "include" });
     }
   }
   if (res.status === 204) return null;

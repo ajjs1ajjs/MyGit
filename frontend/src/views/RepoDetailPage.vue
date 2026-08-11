@@ -83,8 +83,10 @@ import { api } from "../api/client";
 import { useRepo } from "../composables/useRepo";
 import { useNotificationStore } from "../stores/notification";
 import { renderMarkdown } from "../utils/markdown";
-import hljs from "highlight.js";
+import { hljs, registerLanguages } from "../lib/highlight";
 import "highlight.js/styles/github-dark.css";
+
+registerLanguages();
 
 const route = useRoute();
 const repoUsername = route.params.username as string;

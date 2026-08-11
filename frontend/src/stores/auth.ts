@@ -10,22 +10,15 @@ interface User {
 
 export const useAuthStore = defineStore("auth", () => {
   const user = ref<User | null>(null);
-  const token = ref(localStorage.getItem("access_token") || "");
 
   async function login(identity: string, password: string, otp?: string) {
     const data = await api.post("/auth/login/", { login: identity, password, otp });
-    token.value = data.access;
-    localStorage.setItem("access_token", data.access);
-    localStorage.setItem("refresh_token", data.refresh);
     user.value = data.user;
     return data.user;
   }
 
   async function register(username: string, password: string) {
     const data = await api.post("/auth/register/", { username, password });
-    token.value = data.access;
-    localStorage.setItem("access_token", data.access);
-    localStorage.setItem("refresh_token", data.refresh);
     user.value = data.user;
     return data.user;
   }
@@ -35,10 +28,10 @@ export const useAuthStore = defineStore("auth", () => {
     catch { user.value = null; }
   }
 
-  function logout() {
-    user.value = null; token.value = "";
-    localStorage.removeItem("access_token"); localStorage.removeItem("refresh_token");
+  async function logout() {
+    user.value = null;
+    try { await api.post("/auth/logout/"); } catch { /* cookie may already be gone */ }
   }
 
-  return { user, token, login, register, fetchMe, logout };
+  return { user, login, register, fetchMe, logout };
 });

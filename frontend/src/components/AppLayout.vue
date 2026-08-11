@@ -67,5 +67,5 @@
 import { ref, onMounted } from "vue"; import { useRouter } from "vue-router"; import { useAuthStore } from "../stores/auth"; import { api } from "../api/client"; import Toast from "./Toast.vue";
 const router = useRouter(); const auth = useAuthStore(); const q = ref(""); const repos = ref<any[]>([]);
 function search(){ if(q.value.trim()) router.push(`/search?q=${encodeURIComponent(q.value.trim())}`) }
-onMounted(async ()=>{ if(auth.token){ auth.fetchMe(); try{ repos.value=((await api.get("/projects/"))||[]).slice(0,20) }catch{} } });
+onMounted(async ()=>{ await auth.fetchMe(); if(auth.user){ try{ repos.value=((await api.get("/projects/"))||[]).slice(0,20) }catch{} } });
 </script>

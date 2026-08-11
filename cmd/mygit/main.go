@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -69,10 +68,20 @@ func main() {
 		_ = srv.Shutdown(ctx)
 	}()
 
-	log.Printf("MyGit %s listening on http://%s (repos: %s)", Version, addr, cfg.RepoRoot)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	scheme := "http"
+	if cfg.TLSCert != "" && cfg.TLSKey != "" {
+		scheme = "https"
+	}
+	log.Printf("MyGit %s listening on %s://%s (repos: %s)", Version, scheme, addr, cfg.RepoRoot)
+	if cfg.TLSCert != "" && cfg.TLSKey != "" {
+		err = srv.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey)
+	} else {
+		// No TLS configured: either run behind a reverse proxy that terminates
+		// TLS, or bind to loopback only for a trusted network.
+		log.Println("TLS disabled (set MYGIT_TLS_CERT and MYGIT_TLS_KEY, or terminate TLS at a reverse proxy)")
+		err = srv.ListenAndServe()
+	}
+	if err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server: %v", err)
 	}
 }
-
-var _ = filepath.Join

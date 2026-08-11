@@ -65,8 +65,18 @@ docker compose up -d   # або: docker run -d -p 8080:8080 -v mygit-data:/data 
 | `MYGIT_REPOS_ROOT` | Директорія bare-репозиторіїв | `{base}/repos` |
 | `MYGIT_DB_PATH` | Шлях до SQLite | `{base}/mygit.db` |
 | `MYGIT_JWT_SECRET` | Секрет JWT (авто-генерація поруч із БД) | авто |
-| `MYGIT_INTERNAL_API_TOKEN` | Токен для git hooks/CI | авто (друкується) |
+| `MYGIT_INTERNAL_API_TOKEN` | Токен для git hooks/CI | авто (друкується лише в TTY) |
 | `MYGIT_GIT_BINARY` | Шлях до git | `git` |
+| `MYGIT_TLS_CERT` | Шлях до TLS-сертифіката (вмикає HTTPS) | порожньо |
+| `MYGIT_TLS_KEY` | Шлях до TLS-ключа | порожньо |
+
+> **HTTPS:** якщо задано `MYGIT_TLS_CERT` і `MYGIT_TLS_KEY`, сервер слухає HTTPS самостійно.
+> Інакше (рекомендовано) розмістіть MyGit за reverse-proxy (Caddy/Nginx) із TLS-termination.
+> У режимі cookie-авторизації `Secure`-прапорець увімкнеться автоматично лише при HTTPS.
+
+> **Авторизація:** SPA використовує **HttpOnly cookies** (`SameSite=Strict`), токени не зберігаються
+> у `localStorage`. Програмні клієнти (hooks/CI/CLI) можуть і надалі передавати JWT/PAT через
+> `Authorization: Bearer` або Basic auth.
 
 ---
 
