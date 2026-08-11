@@ -405,6 +405,15 @@ func (b *Backend) MergeMR(dir, sourceBranch, targetBranch string) (string, error
 	if out, err := run(b.Binary, tmp, "checkout", "-q", targetBranch); err != nil {
 		return "", fmt.Errorf("git checkout: %v: %s", err, out)
 	}
+	// The scratch clone has no git identity, so a merge commit would fail with
+	// "Committer identity unknown" on hosts without a global git config (CI,
+	// minimal containers). Set a neutral identity for the merge commit.
+	if out, err := run(b.Binary, tmp, "config", "user.name", "MyGit"); err != nil {
+		return "", fmt.Errorf("git config user.name: %v: %s", err, out)
+	}
+	if out, err := run(b.Binary, tmp, "config", "user.email", "mygit@localhost"); err != nil {
+		return "", fmt.Errorf("git config user.email: %v: %s", err, out)
+	}
 	// merge with a non-fast-forward merge commit, aborting on conflicts.
 	if out, err := run(b.Binary, tmp, "merge", "--no-ff", "-m",
 		fmt.Sprintf("Merge branch '%s' into '%s'", sourceBranch, targetBranch), sourceBranch); err != nil {
