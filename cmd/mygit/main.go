@@ -18,7 +18,7 @@ import (
 	"github.com/ajjs1ajjs/MyGit/internal/storage"
 )
 
-const Version = "3.0.10"
+const Version = "3.0.11"
 
 func main() {
 	// Handle version flags before flag.Parse, which would otherwise reject
@@ -58,6 +58,7 @@ func main() {
 	gitBackend := git.New(cfg.GitBinary, cfg.RepoRoot)
 
 	app := &api.App{Cfg: cfg, Store: store, Auth: authn, Git: gitBackend, Start: time.Now()}
+	app.StartBackupScheduler()
 
 	// dual-stack bind (a lesson from the other ports).
 	var addr string

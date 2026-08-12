@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -210,8 +211,125 @@ func (a *App) runBackup(jobID int64, s *storage.BackupSchedule) {
 	a.Store.FinishBackupJob(jobID, "success", resultPath, notes)
 }
 
-// uploadBackup PUTs a file to <MYGIT_BACKUP_UPLOAD_URL>/<filename>. Compatible
-// with S3-style signed URLs or a plain HTTP upload endpoint.
+// StartBackupScheduler launches the background loop that runs enabled backup
+// schedules when their time_of_day/frequency comes due. Called once at startup.
+func (a *App) StartBackupScheduler() {
+	go a.backupSchedulerLoop()
+}
+
+func (a *App) backupSchedulerLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		a.runDueBackups(time.Now().UTC())
+	}
+}
+
+// runDueBackups checks every enabled schedule and launches backups that are due.
+func (a *App) runDueBackups(now time.Time) {
+	schedules, err := a.Store.ListBackupSchedules()
+	if err != nil {
+		return
+	}
+	for _, s := range schedules {
+		if s.Enabled != 1 {
+			continue
+		}
+		next, ok := nextBackupTime(&s, now)
+		if !ok || now.Before(next) || now.After(next.Add(backupGraceWindow)) {
+			continue
+		}
+		// Reserve the run before spawning the goroutine so the next tick can't
+		// double-fire.
+		_ = a.Store.UpdateBackupSchedule(s.ID, map[string]any{"last_run_at": storage.Now()})
+		jobID, err := a.Store.CreateBackupJob(s.Name)
+		if err != nil {
+			continue
+		}
+		a.Store.AddAuditEvent("backup.scheduled", 0, "system", "backup", s.Name, "Scheduled backup '"+s.Name+"' started")
+		go a.runBackup(jobID, &s)
+	}
+}
+
+// backupGraceWindow is how long after a slot the scheduler still considers it
+// runnable before skipping to the next future slot.
+const backupGraceWindow = 10 * time.Minute
+
+// nextBackupTime returns the next occurrence of the schedule's time after its
+// last run (or after creation when it has never run). A never-run schedule
+// whose slot is already older than the grace window waits for the next future
+// slot instead of catching up.
+func nextBackupTime(s *storage.BackupSchedule, now time.Time) (time.Time, bool) {
+	h, m, sec := parseTimeOfDay(s.TimeOfDay)
+	base := now
+	if s.LastRunAt != "" {
+		if t, err := parseStorageTime(s.LastRunAt); err == nil {
+			base = t
+		}
+	} else if s.CreatedAt != "" {
+		if t, err := parseStorageTime(s.CreatedAt); err == nil {
+			base = t
+		}
+	}
+	next := nextSlotAfter(base, s.Frequency, h, m, sec)
+	if s.LastRunAt == "" && now.Sub(next) > backupGraceWindow {
+		next = nextSlotAfter(now, s.Frequency, h, m, sec)
+	}
+	return next, true
+}
+
+// nextSlotAfter returns the first slot of the given frequency strictly after
+// base.
+func nextSlotAfter(base time.Time, frequency string, h, m, sec int) time.Time {
+	switch frequency {
+	case "hourly":
+		next := time.Date(base.Year(), base.Month(), base.Day(), base.Hour(), m, sec, 0, time.UTC)
+		if !next.After(base) {
+			next = next.Add(time.Hour)
+		}
+		return next
+	case "weekly":
+		next := time.Date(base.Year(), base.Month(), base.Day(), h, m, sec, 0, time.UTC)
+		if !next.After(base) {
+			next = next.AddDate(0, 0, 7)
+		}
+		return next
+	default: // daily
+		next := time.Date(base.Year(), base.Month(), base.Day(), h, m, sec, 0, time.UTC)
+		if !next.After(base) {
+			next = next.AddDate(0, 0, 1)
+		}
+		return next
+	}
+}
+
+// parseTimeOfDay parses "HH:MM" or "HH:MM:SS".
+func parseTimeOfDay(tod string) (h, m, sec int) {
+	parts := strings.Split(tod, ":")
+	if len(parts) > 0 {
+		h, _ = strconv.Atoi(strings.TrimSpace(parts[0]))
+	}
+	if len(parts) > 1 {
+		m, _ = strconv.Atoi(strings.TrimSpace(parts[1]))
+	}
+	if len(parts) > 2 {
+		sec, _ = strconv.Atoi(strings.TrimSpace(parts[2]))
+	}
+	return
+}
+
+// parseStorageTime parses the storage UTC timestamp (or RFC3339).
+func parseStorageTime(s string) (time.Time, error) {
+	t, err := time.Parse("2006-01-02T15:04:05.000000+00:00", s)
+	if err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC3339, s)
+}
+
+// uploadBackup PUTs a file to MYGIT_BACKUP_UPLOAD_URL. The URL may contain a
+// {filename} placeholder, end with "/" (filename is appended), or be used as
+// the exact destination (e.g. a presigned S3 URL).
 func (a *App) uploadBackup(path string) error {
 	client := &http.Client{Timeout: 5 * time.Minute}
 	f, err := os.Open(path)
@@ -220,7 +338,13 @@ func (a *App) uploadBackup(path string) error {
 	}
 	defer f.Close()
 	base := strings.TrimRight(a.Cfg.BackupUploadURL, "/")
-	req, err := http.NewRequest(http.MethodPut, base+"/"+filepath.Base(path), f)
+	filename := filepath.Base(path)
+	if strings.Contains(base, "{filename}") {
+		base = strings.ReplaceAll(base, "{filename}", filename)
+	} else if !strings.HasSuffix(base, "/") && !strings.Contains(base, "?") {
+		base = base + "/" + filename
+	}
+	req, err := http.NewRequest(http.MethodPut, base, f)
 	if err != nil {
 		return err
 	}

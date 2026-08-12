@@ -31,7 +31,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 VOLUME ["/data"]
 
 LABEL maintainer="MyGit"
-LABEL version="3.0.10"
+LABEL version="3.0.11"
 LABEL description="Self-hosted Git platform (Go)"
 
 CMD ["mygit", "-port", "8060"]

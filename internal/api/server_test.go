@@ -1125,3 +1125,100 @@ func TestRateLimitTrustProxy(t *testing.T) {
 		t.Fatalf("trusted-proxy XFF should give each IP its own bucket (got %v)", statuses)
 	}
 }
+
+// TestNextBackupTime covers the daily/hourly/weekly due-time computation.
+func TestNextBackupTime(t *testing.T) {
+	now := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+
+	daily := &storage.BackupSchedule{Frequency: "daily", TimeOfDay: "02:15:00", LastRunAt: ""}
+	// never run: next occurrence of 02:15 after now = tomorrow 02:15
+	next, ok := nextBackupTime(daily, now)
+	if !ok || next != time.Date(2026, 8, 13, 2, 15, 0, 0, time.UTC) {
+		t.Fatalf("daily never-run next = %v", next)
+	}
+	// ran today at 02:15: next is tomorrow 02:15
+	daily.LastRunAt = "2026-08-12T02:15:00.000000+00:00"
+	next, _ = nextBackupTime(daily, now)
+	if next != time.Date(2026, 8, 13, 2, 15, 0, 0, time.UTC) {
+		t.Fatalf("daily next = %v", next)
+	}
+
+	hourly := &storage.BackupSchedule{Frequency: "hourly", TimeOfDay: "15:30", LastRunAt: "2026-08-12T09:15:00.000000+00:00"}
+	next, _ = nextBackupTime(hourly, now)
+	// next occurrence of "minute :30" after the last run (09:15) = 09:30
+	if next != time.Date(2026, 8, 12, 9, 30, 0, 0, time.UTC) {
+		t.Fatalf("hourly next = %v", next)
+	}
+
+	// Never-run hourly anchored at creation: the current hour's slot must be
+	// picked up even when the ticker fires just after it.
+	neverRun := &storage.BackupSchedule{
+		Frequency: "hourly", TimeOfDay: "00:18",
+		CreatedAt: "2026-08-12T13:17:49.000000+00:00", LastRunAt: "",
+	}
+	next, _ = nextBackupTime(neverRun, time.Date(2026, 8, 12, 13, 18, 18, 0, time.UTC))
+	if next != time.Date(2026, 8, 12, 13, 18, 0, 0, time.UTC) {
+		t.Fatalf("never-run hourly slot missed: next = %v", next)
+	}
+
+	// A never-run schedule far past its slot waits for the next future slot.
+	stale := &storage.BackupSchedule{
+		Frequency: "daily", TimeOfDay: "02:15",
+		CreatedAt: "2026-07-01T14:00:00.000000+00:00", LastRunAt: "",
+	}
+	next, _ = nextBackupTime(stale, time.Date(2026, 8, 12, 13, 0, 0, 0, time.UTC))
+	if next != time.Date(2026, 8, 13, 2, 15, 0, 0, time.UTC) {
+		t.Fatalf("stale never-run should wait for tomorrow's slot, got %v", next)
+	}
+
+	weekly := &storage.BackupSchedule{Frequency: "weekly", TimeOfDay: "03:00", LastRunAt: "2026-08-05T03:00:00.000000+00:00"}
+	next, _ = nextBackupTime(weekly, now)
+	if next != time.Date(2026, 8, 12, 3, 0, 0, 0, time.UTC) {
+		t.Fatalf("weekly next = %v", next)
+	}
+}
+
+// TestRunDueBackups verifies the scheduler fires for a due enabled schedule and
+// records a backup job, but skips disabled or not-yet-due ones.
+func TestRunDueBackups(t *testing.T) {
+	app, _ := newBackupTestApp(t)
+	now := time.Now().UTC()
+
+	// due schedule: last ran yesterday at this schedule's time
+	due, _ := app.Store.CreateBackupSchedule(&storage.BackupSchedule{
+		Name: "due", Frequency: "daily", TimeOfDay: now.Add(-time.Minute).Format("15:04"),
+		Enabled: 1, Encrypt: 1, Upload: 0, KeepLocal: 5,
+	})
+	_ = app.Store.UpdateBackupSchedule(due, map[string]any{"last_run_at": now.Add(-24 * time.Hour).Format("2006-01-02T15:04:05.000000+00:00")})
+
+	// not due: scheduled for tomorrow
+	future, _ := app.Store.CreateBackupSchedule(&storage.BackupSchedule{
+		Name: "future", Frequency: "daily", TimeOfDay: now.Add(24 * time.Hour).Format("15:04"),
+		Enabled: 1, Encrypt: 1, Upload: 0, KeepLocal: 5,
+	})
+	_ = future
+
+	// disabled
+	_, _ = app.Store.CreateBackupSchedule(&storage.BackupSchedule{
+		Name: "off", Frequency: "daily", TimeOfDay: now.Format("15:04"),
+		Enabled: 0, Encrypt: 1, Upload: 0, KeepLocal: 5,
+	})
+
+	app.runDueBackups(now)
+
+	jobs, _ := app.Store.ListBackupJobs()
+	if len(jobs) == 0 {
+		t.Fatalf("expected the due schedule to fire")
+	}
+	for _, j := range jobs {
+		if j.Kind != "due" {
+			t.Fatalf("unexpected job kind %q", j.Kind)
+		}
+	}
+	// give the async runBackup a moment
+	time.Sleep(300 * time.Millisecond)
+	s, _ := app.Store.GetBackupSchedule(due)
+	if s.LastRunAt == "" {
+		t.Fatalf("last_run_at was not updated for the due schedule")
+	}
+}

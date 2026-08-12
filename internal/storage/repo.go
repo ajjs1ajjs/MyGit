@@ -1014,11 +1014,12 @@ type BackupSchedule struct {
 	Encrypt    int    `json:"encrypt"`
 	Upload     int    `json:"upload"`
 	KeepLocal  int    `json:"keep_local"`
+	LastRunAt  string `json:"last_run_at"`
 	CreatedAt  string `json:"created_at"`
 }
 
 func (st *Store) ListBackupSchedules() ([]BackupSchedule, error) {
-	rows, err := st.DB.Query(`SELECT id, name, COALESCE(frequency,'daily'), COALESCE(time_of_day,'02:15:00'), enabled, encrypt, upload, keep_local, COALESCE(created_at,'') FROM backup_schedules ORDER BY id`)
+	rows, err := st.DB.Query(`SELECT id, name, COALESCE(frequency,'daily'), COALESCE(time_of_day,'02:15:00'), enabled, encrypt, upload, keep_local, COALESCE(last_run_at,''), COALESCE(created_at,'') FROM backup_schedules ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -1026,7 +1027,7 @@ func (st *Store) ListBackupSchedules() ([]BackupSchedule, error) {
 	var out []BackupSchedule
 	for rows.Next() {
 		var s BackupSchedule
-		if err := rows.Scan(&s.ID, &s.Name, &s.Frequency, &s.TimeOfDay, &s.Enabled, &s.Encrypt, &s.Upload, &s.KeepLocal, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &s.Frequency, &s.TimeOfDay, &s.Enabled, &s.Encrypt, &s.Upload, &s.KeepLocal, &s.LastRunAt, &s.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -1045,8 +1046,8 @@ func (st *Store) CreateBackupSchedule(s *BackupSchedule) (int64, error) {
 
 func (st *Store) GetBackupSchedule(id int64) (*BackupSchedule, error) {
 	var s BackupSchedule
-	err := st.DB.QueryRow(`SELECT id, name, COALESCE(frequency,'daily'), COALESCE(time_of_day,'02:15:00'), enabled, encrypt, upload, keep_local, COALESCE(created_at,'') FROM backup_schedules WHERE id = ?`, id).
-		Scan(&s.ID, &s.Name, &s.Frequency, &s.TimeOfDay, &s.Enabled, &s.Encrypt, &s.Upload, &s.KeepLocal, &s.CreatedAt)
+	err := st.DB.QueryRow(`SELECT id, name, COALESCE(frequency,'daily'), COALESCE(time_of_day,'02:15:00'), enabled, encrypt, upload, keep_local, COALESCE(last_run_at,''), COALESCE(created_at,'') FROM backup_schedules WHERE id = ?`, id).
+		Scan(&s.ID, &s.Name, &s.Frequency, &s.TimeOfDay, &s.Enabled, &s.Encrypt, &s.Upload, &s.KeepLocal, &s.LastRunAt, &s.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

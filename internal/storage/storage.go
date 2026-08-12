@@ -226,6 +226,7 @@ CREATE TABLE IF NOT EXISTS backup_schedules (
   encrypt INTEGER DEFAULT 1,
   upload INTEGER DEFAULT 1,
   keep_local INTEGER DEFAULT 14,
+  last_run_at TEXT DEFAULT '',
   created_at TEXT
 );
 CREATE TABLE IF NOT EXISTS backup_jobs (
@@ -293,6 +294,9 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	if err := addColumnIfMissing(db, "repositories", "storage_path", "TEXT DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "backup_schedules", "last_run_at", "TEXT DEFAULT ''"); err != nil {
 		return err
 	}
 	return nil

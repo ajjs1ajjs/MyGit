@@ -4,7 +4,7 @@
 
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-blue.svg)](https://go.dev)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-3.0.10-orange.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-3.0.11-orange.svg)](CHANGELOG.md)
 
 ---
 
@@ -76,6 +76,11 @@ docker compose up -d   # або: docker run -d -p 8060:8060 -v mygit-data:/data 
 > **HTTPS:** якщо задано `MYGIT_TLS_CERT` і `MYGIT_TLS_KEY`, сервер слухає HTTPS самостійно.
 > Інакше (рекомендовано) розмістіть MyGit за reverse-proxy (Caddy/Nginx) із TLS-termination.
 > У режимі cookie-авторизації `Secure`-прапорець увімкнеться автоматично лише при HTTPS.
+
+> **Беккапи:** увімкнені розклади (`enabled`) виконуються автоматично фоновими планувальником.
+> Частота: `daily` / `hourly` / `weekly` + `time_of_day` (`HH:MM[:SS]`). `encrypt` шифрує архів
+> (AES-256-GCM), `upload` відправляє його на `MYGIT_BACKUP_UPLOAD_URL` (PUT, підтримує
+> `{filename}` або presigned S3 URL), `keep_local` лишає лише останні N архівів.
 
 > **Авторизація:** SPA використовує **HttpOnly cookies** (`SameSite=Strict`), токени не зберігаються
 > у `localStorage`. Програмні клієнти (hooks/CI/CLI) можуть і надалі передавати JWT/PAT через
