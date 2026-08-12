@@ -158,9 +158,13 @@ func (a *App) Handler() http.Handler {
 	r.With(a.withAuth).Get("/api/v1/notifications/", a.handleNotifications)
 	r.With(a.withAuth).Get("/api/v1/search/", a.handleSearch)
 
-	// SPA (Vue history mode): /assets/* and index.html fallback
+	// SPA (Vue history mode): /assets/* and index.html fallback.
+	// FileServer must be rooted at the "web/assets" subdirectory; StripPrefix
+	// rewrites /assets/xxx into /xxx, so mounting the whole "web" dir would
+	// look for the file at web/xxx and 404 every asset.
 	web, _ := fs.Sub(webFS, "web")
-	r.Get("/assets/*", http.StripPrefix("/assets/", http.FileServer(http.FS(web))).ServeHTTP)
+	assets, _ := fs.Sub(webFS, "web/assets")
+	r.Get("/assets/*", http.StripPrefix("/assets/", http.FileServer(http.FS(assets))).ServeHTTP)
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		// Never hand out the SPA HTML for unmatched API paths — a client that
 		// calls an unknown /api/ endpoint must get JSON, otherwise the frontend

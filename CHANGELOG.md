@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.12] - 2026-08-12
+
+### 🐞 Виправлено (CRITICAL для SPA)
+
+- **SPA assets віддавались 404** — `GET /assets/*` повертав 404 із `text/plain`, тож браузер відмовлявся застосовувати CSS/JS (`Refused to apply style... MIME type text/plain`). Причина: `http.StripPrefix("/assets/")` переписує шлях у `/xxx`, а `http.FileServer` був змонтований на `web/` замість `web/assets/` — файли шукались не там. Тепер FileServer змонтований на `web/assets/`. Сторінка `/` вантажила index.html, але весь інтерфейс був неспроможний завантажитись.
+- Додано regression тест `TestSpaAssetsAreServed` — кожен `/assets/*` з index.html віддається з 200 і не-text/plain MIME.
+
 ## [3.0.11] - 2026-08-12
 
 ### 🗓 Авто-розклад беккапів

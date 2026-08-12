@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -1081,6 +1083,40 @@ func TestMRFastForward(t *testing.T) {
 	mainSHA := strings.TrimSpace(gitCmd(t, repoDir, "rev-parse", "main"))
 	if mainSHA != featureSHA {
 		t.Fatalf("fast-forward failed: main=%s feature=%s (base=%s)", mainSHA, featureSHA, baseSHA)
+	}
+}
+
+// TestSpaAssetsAreServed guards the SPA asset route: every /assets/* file
+// referenced by the embedded index.html must be served with a real MIME type
+// (not 404/text-plain), which used to break because the FileServer was rooted
+// at "web" instead of "web/assets".
+func TestSpaAssetsAreServed(t *testing.T) {
+	_, base, _ := newTestApp(t)
+
+	indexHTML, err := fs.ReadFile(webFS, "web/index.html")
+	if err != nil {
+		t.Fatalf("read index.html: %v", err)
+	}
+	// find src="/assets/X" and href="/assets/X"
+	re := regexp.MustCompile(`(?:src|href)="(/assets/[^"]+)"`)
+	refs := re.FindAllStringSubmatch(string(indexHTML), -1)
+	if len(refs) == 0 {
+		t.Fatalf("no asset references in index.html")
+	}
+	for _, m := range refs {
+		path := m[1]
+		resp, err := http.Get(base + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("GET %s = %d (%s)", path, resp.StatusCode, body)
+		}
+		if ct := resp.Header.Get("Content-Type"); strings.HasPrefix(ct, "text/plain") {
+			t.Fatalf("GET %s served as %s — asset route broken", path, ct)
+		}
 	}
 }
 
