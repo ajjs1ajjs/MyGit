@@ -21,6 +21,15 @@ type Config struct {
 	TLSCert           string
 	TLSKey            string
 	BaseDir           string
+	// BackupKey is the encryption key for backup archives (AES-256-GCM).
+	// Falls back to a key derived from JWTSecret when unset.
+	BackupKey string
+	// BackupUploadURL is the base URL (S3-compatible PUT or plain HTTP server)
+	// that backup archives are uploaded to when a schedule has upload=1.
+	BackupUploadURL string
+	// TrustProxy enables trusting X-Forwarded-For for rate limiting. Only
+	// enable when a trusted reverse proxy always overwrites the header.
+	TrustProxy bool
 }
 
 func Default() *Config {
@@ -41,6 +50,9 @@ func Default() *Config {
 		TLSCert:           os.Getenv("MYGIT_TLS_CERT"),
 		TLSKey:            os.Getenv("MYGIT_TLS_KEY"),
 		BaseDir:           base,
+		BackupKey:         os.Getenv("MYGIT_BACKUP_KEY"),
+		BackupUploadURL:   os.Getenv("MYGIT_BACKUP_UPLOAD_URL"),
+		TrustProxy:        os.Getenv("MYGIT_TRUST_PROXY") == "1" || os.Getenv("MYGIT_TRUST_PROXY") == "true",
 	}
 }
 

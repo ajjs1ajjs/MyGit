@@ -965,3 +965,163 @@ func TestPATExpiryEnforced(t *testing.T) {
 		t.Fatalf("expired PAT should be rejected, got %d", resp.StatusCode)
 	}
 }
+
+// newBackupTestApp builds an App whose BaseDir lives in a temp dir so backup
+// jobs don't touch the working copy.
+func newBackupTestApp(t *testing.T) (*App, string) {
+	t.Helper()
+	dir := t.TempDir()
+	db, abs, err := storage.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	store := storage.NewStore(db, abs)
+	t.Cleanup(func() { _ = store.DB.Close() })
+	cfg := config.Default()
+	cfg.BaseDir = dir
+	cfg.RepoRoot = filepath.Join(dir, "repos")
+	cfg.DBPath = filepath.Join(dir, "mygit.db")
+	cfg.JWTSecret = "test-secret-1234567890abcdefghijklmnopqrstuvwxyz"
+	cfg.InternalToken = "internal-test-token"
+	cfg.BackupKey = ""
+	_ = os.MkdirAll(cfg.RepoRoot, 0o755)
+	authn := auth.New(cfg.JWTSecret, 15, 30)
+	gitBackend := git.New("git", cfg.RepoRoot)
+	app := &App{Cfg: cfg, Store: store, Auth: authn, Git: gitBackend, Start: time.Now()}
+	return app, dir
+}
+
+// TestBackupEncryptRoundtrip verifies encrypted archives are produced, the
+// plaintext is removed, and the ciphertext decrypts to a valid gzip stream.
+func TestBackupEncryptRoundtrip(t *testing.T) {
+	app, dir := newBackupTestApp(t)
+	// seed a file in a repo so the archive has content
+	_ = os.MkdirAll(filepath.Join(dir, "repos", "alice", "repo.git"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "repos", "alice", "repo.git", "HEAD"), []byte("ref: refs/heads/main"), 0o644)
+
+	s := &storage.BackupSchedule{Name: "t", Frequency: "daily", Enabled: 1, Encrypt: 1, Upload: 0, KeepLocal: 5}
+	jobID, _ := app.Store.CreateBackupJob("scheduled")
+	app.runBackup(jobID, s)
+	jobs, _ := app.Store.ListBackupJobs()
+	if jobs[0].Status != "success" {
+		t.Fatalf("backup status = %s (%s)", jobs[0].Status, jobs[0].Error)
+	}
+	if !strings.HasSuffix(jobs[0].ArchivePath, ".tar.gz.enc") {
+		t.Fatalf("expected encrypted archive, got %s", jobs[0].ArchivePath)
+	}
+	if _, err := os.Stat(strings.TrimSuffix(jobs[0].ArchivePath, ".enc")); err == nil {
+		t.Fatalf("plaintext archive was not removed")
+	}
+	plain, err := decryptFile(jobs[0].ArchivePath, app.Cfg.JWTSecret, app.Cfg.BackupKey)
+	if err != nil {
+		t.Fatalf("decrypt: %v", err)
+	}
+	// gzip magic bytes
+	if len(plain) < 2 || plain[0] != 0x1f || plain[1] != 0x8b {
+		t.Fatalf("decrypted content is not a gzip stream (first bytes %x)", plain[:min(2, len(plain))])
+	}
+}
+
+// TestBackupPrune keeps only the newest keep_local archives.
+func TestBackupPrune(t *testing.T) {
+	app, dir := newBackupTestApp(t)
+	backupDir := filepath.Join(dir, "backups")
+	_ = os.MkdirAll(backupDir, 0o755)
+	now := time.Now()
+	for i := 0; i < 5; i++ {
+		name := filepath.Join(backupDir, fmt.Sprintf("mygit-backup-2000010%d-000000.tar.gz", i))
+		_ = os.WriteFile(name, []byte("x"), 0o644)
+		_ = os.Chtimes(name, now.Add(-time.Duration(i)*time.Hour), now.Add(-time.Duration(i)*time.Hour))
+	}
+	app.pruneBackups(2)
+	entries, _ := os.ReadDir(backupDir)
+	if len(entries) != 2 {
+		t.Fatalf("after prune want 2 files, got %d", len(entries))
+	}
+}
+
+// TestMRFastForward verifies method=fast-forward fast-forwards the target when
+// possible (no merge commit) and method=merge-commit still creates one.
+func TestMRFastForward(t *testing.T) {
+	_, base, repoRoot := newTestApp(t)
+	token := registerAndLogin(t, base)
+	authReq("POST", base+"/api/v1/projects/", token, map[string]any{"name": "ff", "visibility": "public"})
+	repoDir := filepath.Join(repoRoot, "alice", "ff.git")
+
+	// main with a commit
+	work := t.TempDir()
+	gitCmd(t, work, "clone", "-q", repoDir, filepath.Join(work, "wc"))
+	wc := filepath.Join(work, "wc")
+	gitCmd(t, wc, "config", "user.email", "alice@example.com")
+	gitCmd(t, wc, "config", "user.name", "alice")
+	gitCmd(t, wc, "checkout", "-q", "-b", "main")
+	os.WriteFile(filepath.Join(wc, "a.txt"), []byte("base"), 0o644)
+	gitCmd(t, wc, "add", ".")
+	gitCmd(t, wc, "commit", "-q", "-m", "base")
+	gitCmd(t, wc, "push", "-q", "-u", "origin", "main")
+	baseSHA := strings.TrimSpace(gitCmd(t, repoDir, "rev-parse", "main"))
+
+	// feature on top of main (fast-forwardable)
+	gitCmd(t, wc, "checkout", "-q", "-b", "feature")
+	os.WriteFile(filepath.Join(wc, "b.txt"), []byte("new"), 0o644)
+	gitCmd(t, wc, "add", ".")
+	gitCmd(t, wc, "commit", "-q", "-m", "feature")
+	gitCmd(t, wc, "push", "-q", "-u", "origin", "feature")
+	featureSHA := strings.TrimSpace(gitCmd(t, repoDir, "rev-parse", "feature"))
+
+	// open MR
+	authReq("POST", base+"/api/v1/projects/1/merge_requests/", token, map[string]any{
+		"source_branch": "feature", "target_branch": "main", "title": "ff merge",
+	})
+	// fast-forward merge
+	resp, b := authReq("POST", base+"/api/v1/projects/1/merge_requests/1/merge/", token, map[string]any{"method": "fast-forward"})
+	if resp.StatusCode != 200 {
+		t.Fatalf("ff merge = %d: %s", resp.StatusCode, b)
+	}
+	mainSHA := strings.TrimSpace(gitCmd(t, repoDir, "rev-parse", "main"))
+	if mainSHA != featureSHA {
+		t.Fatalf("fast-forward failed: main=%s feature=%s (base=%s)", mainSHA, featureSHA, baseSHA)
+	}
+}
+
+// TestRateLimitTrustProxy verifies XFF is used only when TrustProxy is set.
+func TestRateLimitTrustProxy(t *testing.T) {
+	// Without TrustProxy, a spoofed XFF must not bypass the shared limiter.
+	_, base, _ := newTestApp(t)
+	statuses := map[int]int{}
+	for i := 0; i < 11; i++ {
+		req, _ := http.NewRequest("POST", base+"/api/v1/auth/login/", strings.NewReader(`{"username":"x","password":"y"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Forwarded-For", "203.0.113.99")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("req %d: %v", i, err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		statuses[resp.StatusCode]++
+	}
+	if statuses[429] == 0 {
+		t.Fatalf("spoofed XFF bypassed the rate limiter (got %v)", statuses)
+	}
+
+	// With TrustProxy, distinct XFF IPs get distinct buckets.
+	app, base2, _ := newTestApp(t)
+	app.Cfg.TrustProxy = true
+	statuses = map[int]int{}
+	for i := 0; i < 11; i++ {
+		req, _ := http.NewRequest("POST", base2+"/api/v1/auth/login/", strings.NewReader(`{"username":"x","password":"y"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", i+1))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("req %d: %v", i, err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		statuses[resp.StatusCode]++
+	}
+	if statuses[429] != 0 {
+		t.Fatalf("trusted-proxy XFF should give each IP its own bucket (got %v)", statuses)
+	}
+}

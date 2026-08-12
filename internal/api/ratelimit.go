@@ -3,6 +3,7 @@ package api
 import (
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -60,14 +61,22 @@ func (rl *rateLimiter) allow(ip string) bool {
 	return b.count <= rl.limit
 }
 
-// clientIP uses the socket peer address only. X-Forwarded-For is deliberately
-// not trusted here because it is client-spoofable unless a trusted proxy
-// overwrites it; deployments behind a reverse proxy should ensure it sets the
-// header, or extend this function.
-func clientIP(r *http.Request) string {
+// clientIP uses the socket peer address. X-Forwarded-For is only trusted when
+// the instance runs behind a trusted reverse proxy (MYGIT_TRUST_PROXY=1), which
+// is expected to overwrite the header so a client cannot spoof it. When not
+// behind a proxy the first XFF entry would be attacker-controlled, so it is
+// deliberately ignored.
+func (a *App) clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	if a.Cfg.TrustProxy && r.Header.Get("X-Forwarded-For") != "" {
+		// The proxy prepends the real client IP; take the first entry.
+		first := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0])
+		if first != "" {
+			return first
+		}
 	}
 	return host
 }
@@ -75,7 +84,7 @@ func clientIP(r *http.Request) string {
 func (a *App) withRateLimit(rl *rateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !rl.allow(clientIP(r)) {
+			if !rl.allow(a.clientIP(r)) {
 				w.Header().Set("Retry-After", "60")
 				writeErr(w, http.StatusTooManyRequests, "Too many requests")
 				return

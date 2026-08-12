@@ -4,7 +4,7 @@
 
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-blue.svg)](https://go.dev)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-3.0.9-orange.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-3.0.10-orange.svg)](CHANGELOG.md)
 
 ---
 
@@ -69,6 +69,9 @@ docker compose up -d   # або: docker run -d -p 8060:8060 -v mygit-data:/data 
 | `MYGIT_GIT_BINARY` | Шлях до git | `git` |
 | `MYGIT_TLS_CERT` | Шлях до TLS-сертифіката (вмикає HTTPS) | порожньо |
 | `MYGIT_TLS_KEY` | Шлях до TLS-ключа | порожньо |
+| `MYGIT_BACKUP_KEY` | Ключ шифрування архівів беккапів (AES-256-GCM) | похідний від JWT secret |
+| `MYGIT_BACKUP_UPLOAD_URL` | Базова URL для upload архівів (HTTP PUT / S3-style) | порожньо |
+| `MYGIT_TRUST_PROXY` | Довіряти `X-Forwarded-For` для rate limiting (`1`/`true`) | `0` |
 
 > **HTTPS:** якщо задано `MYGIT_TLS_CERT` і `MYGIT_TLS_KEY`, сервер слухає HTTPS самостійно.
 > Інакше (рекомендовано) розмістіть MyGit за reverse-proxy (Caddy/Nginx) із TLS-termination.

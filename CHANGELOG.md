@@ -1,5 +1,22 @@
 # Changelog
 
+## [3.0.10] - 2026-08-12
+
+### 🧱 Техборг закрито
+
+- **Реальне шифрування беккапів** — прапорець `encrypt` тепер справді шифрує tar.gz архів AES-256-GCM (ключ `MYGIT_BACKUP_KEY` або похідний від JWT secret); архів зберігається як `.tar.gz.enc`, plaintext видаляється.
+- **Upload беккапів** — прапорець `upload` PUT-завантажує архів на `MYGIT_BACKUP_UPLOAD_URL` (S3-style signed URL або HTTP-ендпоінт). Якщо URL не налаштований — записується нотатка у job, без помилки.
+- **Pruning беккапів** — `keep_local` видаляє найстаріші архіви, лишаючи останні N.
+- **MR fast-forward merge** — `method=fast-forward` у `POST .../merge/` виконує `git merge --ff-only` (коли можливо); при розбіжності гілок fallback на merge-commit. За замовчуванням — `--no-ff`.
+- **Rate limiter за reverse-proxy** — `MYGIT_TRUST_PROXY=1` вмикає використання `X-Forwarded-For` (перший IP) для per-IP лімітів; без прапора XFF ігнорується (не можна обійти ліміт підробкою заголовка).
+- `createBackupArchive` тепер робить один `Walk` замість вкладеного.
+
+### 🆕 Змінні середовища
+
+- `MYGIT_BACKUP_KEY` — ключ шифрування архівів
+- `MYGIT_BACKUP_UPLOAD_URL` — базова URL для upload архівів
+- `MYGIT_TRUST_PROXY` — `1`/`true`, довіряти `X-Forwarded-For`
+
 ## [3.0.9] - 2026-08-12
 
 ### 🆕 Нові ендпоінти (frontend parity з Python/Django-версією)

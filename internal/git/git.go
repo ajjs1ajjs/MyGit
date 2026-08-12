@@ -610,8 +610,9 @@ func (b *Backend) ValidRef(ref string) bool {
 // MergeMR merges sourceBranch into targetBranch of the bare repo at dir and
 // returns the resulting SHA of targetBranch. It performs the merge in an
 // isolated temporary clone so bare repositories don't need a permanent
-// worktree. Fast-forwards when possible; otherwise creates a merge commit.
-func (b *Backend) MergeMR(dir, sourceBranch, targetBranch string) (string, error) {
+// worktree. method "fast-forward" uses --ff-only and falls back to a merge
+// commit when the branches have diverged; anything else uses --no-ff.
+func (b *Backend) MergeMR(dir, sourceBranch, targetBranch, method string) (string, error) {
 	if !b.ValidRef(sourceBranch) || !b.ValidRef(targetBranch) {
 		return "", fmt.Errorf("invalid branch name")
 	}
@@ -643,6 +644,21 @@ func (b *Backend) MergeMR(dir, sourceBranch, targetBranch string) (string, error
 	if out, err := run(b.Binary, tmp, "config", "user.email", "mygit@localhost"); err != nil {
 		return "", fmt.Errorf("git config user.email: %v: %s", err, out)
 	}
+
+	if method == "fast-forward" {
+		if _, err := run(b.Binary, tmp, "merge", "--ff-only", sourceBranch); err == nil {
+			if out, err := run(b.Binary, tmp, "push", "-q", "origin", "HEAD:"+targetBranch); err != nil {
+				return "", fmt.Errorf("git push: %v: %s", err, out)
+			}
+			sha, err := b.RefSHA(dir, targetBranch)
+			if err != nil {
+				return "", err
+			}
+			return sha, nil
+		}
+		// Branches diverged — fall through to a merge commit.
+	}
+
 	// merge with a non-fast-forward merge commit, aborting on conflicts.
 	if out, err := run(b.Binary, tmp, "merge", "--no-ff", "-m",
 		fmt.Sprintf("Merge branch '%s' into '%s'", sourceBranch, targetBranch), sourceBranch); err != nil {

@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"os"
 )
 
 // tokenCipher encrypts/decrypts integration tokens at rest with AES-256-GCM.
@@ -64,4 +65,78 @@ func maskToken(plain string) string {
 		return "****"
 	}
 	return "****" + plain[len(plain)-4:]
+}
+
+// backupKey derives the AES key for backup archives: MYGIT_BACKUP_KEY if set,
+// otherwise a key derived from the JWT secret.
+func backupKey(jwtSecret, configured string) []byte {
+	if configured != "" {
+		if len(configured) >= 32 {
+			return []byte(configured)[:32]
+		}
+		sum := sha256.Sum256([]byte(configured))
+		return sum[:]
+	}
+	sum := sha256.Sum256([]byte(jwtSecret + ":backup"))
+	return sum[:]
+}
+
+// encryptFile encrypts a file with AES-256-GCM and writes it to path+".enc",
+// removing the plaintext source. Returns the encrypted path.
+func encryptFile(path, jwtSecret, configured string) (string, error) {
+	plain, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	sealed, err := sealBytes(plain, jwtSecret, configured)
+	if err != nil {
+		return "", err
+	}
+	encPath := path + ".enc"
+	if err := os.WriteFile(encPath, sealed, 0o600); err != nil {
+		return "", err
+	}
+	_ = os.Remove(path)
+	return encPath, nil
+}
+
+// decryptFile decrypts a ".enc" backup archive, returning the plaintext bytes.
+func decryptFile(path, jwtSecret, configured string) ([]byte, error) {
+	sealed, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return openBytes(sealed, jwtSecret, configured)
+}
+
+func sealBytes(plain []byte, jwtSecret, configured string) ([]byte, error) {
+	block, err := aes.NewCipher(backupKey(jwtSecret, configured))
+	if err != nil {
+		return nil, err
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, err
+	}
+	return aead.Seal(nonce, nonce, plain, nil), nil
+}
+
+func openBytes(sealed []byte, jwtSecret, configured string) ([]byte, error) {
+	block, err := aes.NewCipher(backupKey(jwtSecret, configured))
+	if err != nil {
+		return nil, err
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	if len(sealed) < aead.NonceSize() {
+		return nil, fmt.Errorf("ciphertext too short")
+	}
+	nonce, body := sealed[:aead.NonceSize()], sealed[aead.NonceSize():]
+	return aead.Open(nil, nonce, body, nil)
 }

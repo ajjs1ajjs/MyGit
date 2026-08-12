@@ -416,8 +416,15 @@ func (a *App) handleMergeMR(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "Merge request is not open")
 		return
 	}
+	var body struct {
+		Method string `json:"method"`
+	}
+	_ = jsonDecode(r, &body) // method is optional
+	if body.Method != "fast-forward" {
+		body.Method = "merge-commit"
+	}
 	dir := a.repoDir(repo)
-	sha, err := a.Git.MergeMR(dir, mr.SourceBranch, mr.TargetBranch)
+	sha, err := a.Git.MergeMR(dir, mr.SourceBranch, mr.TargetBranch, body.Method)
 	if err != nil {
 		writeErr(w, http.StatusConflict, "Merge failed: "+err.Error())
 		return

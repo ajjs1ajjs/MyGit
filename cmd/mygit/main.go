@@ -18,7 +18,7 @@ import (
 	"github.com/ajjs1ajjs/MyGit/internal/storage"
 )
 
-const Version = "3.0.9"
+const Version = "3.0.10"
 
 func main() {
 	// Handle version flags before flag.Parse, which would otherwise reject

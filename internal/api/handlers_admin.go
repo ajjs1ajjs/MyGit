@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -151,7 +152,7 @@ func (a *App) handleRunBackupNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.Store.AddAuditEvent("backup.run", p.UserID, p.Username, "backup", s.Name, "Backup schedule '"+s.Name+"' triggered")
-	go a.runBackup(jobID, s.Name)
+	go a.runBackup(jobID, s)
 	writeJSON(w, http.StatusOK, map[string]any{"job_id": jobID, "detail": "backup started"})
 }
 
@@ -168,14 +169,105 @@ func (a *App) handleBackupJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 // runBackup archives the data directory (DB + repos + secrets) into
-// {base}/backups/ as a tar.gz. Runs in a goroutine and updates the job row.
-func (a *App) runBackup(jobID int64, scheduleName string) {
+// {base}/backups/, honoring the schedule's encrypt/upload/keep_local settings.
+// Runs in a goroutine and updates the job row.
+func (a *App) runBackup(jobID int64, s *storage.BackupSchedule) {
 	archivePath, err := a.createBackupArchive()
 	if err != nil {
 		a.Store.FinishBackupJob(jobID, "failed", "", err.Error())
 		return
 	}
-	a.Store.FinishBackupJob(jobID, "success", archivePath, "")
+	resultPath := archivePath
+	notes := ""
+
+	// Encryption (AES-256-GCM, key from MYGIT_BACKUP_KEY or derived).
+	if s.Encrypt == 1 {
+		encPath, err := encryptFile(archivePath, a.Cfg.JWTSecret, a.Cfg.BackupKey)
+		if err != nil {
+			a.Store.FinishBackupJob(jobID, "failed", archivePath, "encrypt: "+err.Error())
+			return
+		}
+		resultPath = encPath
+		notes = "encrypted"
+	}
+
+	// Upload (HTTP PUT to MYGIT_BACKUP_UPLOAD_URL).
+	if s.Upload == 1 {
+		if a.Cfg.BackupUploadURL == "" {
+			notes += "; upload skipped (MYGIT_BACKUP_UPLOAD_URL not set)"
+		} else if err := a.uploadBackup(resultPath); err != nil {
+			notes += "; upload failed: " + err.Error()
+		} else {
+			notes += "; uploaded"
+		}
+	}
+
+	// Keep only the newest keep_local archives.
+	if s.KeepLocal > 0 {
+		a.pruneBackups(s.KeepLocal)
+	}
+
+	a.Store.FinishBackupJob(jobID, "success", resultPath, notes)
+}
+
+// uploadBackup PUTs a file to <MYGIT_BACKUP_UPLOAD_URL>/<filename>. Compatible
+// with S3-style signed URLs or a plain HTTP upload endpoint.
+func (a *App) uploadBackup(path string) error {
+	client := &http.Client{Timeout: 5 * time.Minute}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	base := strings.TrimRight(a.Cfg.BackupUploadURL, "/")
+	req, err := http.NewRequest(http.MethodPut, base+"/"+filepath.Base(path), f)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("upload returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// pruneBackups removes the oldest archives in the backups dir, keeping the
+// newest keepLocal files.
+func (a *App) pruneBackups(keepLocal int) {
+	backupDir := filepath.Join(a.Cfg.BaseDir, "backups")
+	entries, err := os.ReadDir(backupDir)
+	if err != nil {
+		return
+	}
+	type f struct {
+		name string
+		mod  time.Time
+	}
+	var files []f
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if !strings.HasPrefix(e.Name(), "mygit-backup-") {
+			continue
+		}
+		if info, err := e.Info(); err == nil {
+			files = append(files, f{name: e.Name(), mod: info.ModTime()})
+		}
+	}
+	if len(files) <= keepLocal {
+		return
+	}
+	// newest first
+	sort.Slice(files, func(i, j int) bool { return files[i].mod.After(files[j].mod) })
+	for _, old := range files[keepLocal:] {
+		_ = os.Remove(filepath.Join(backupDir, old.name))
+	}
 }
 
 func (a *App) createBackupArchive() (string, error) {
@@ -229,18 +321,10 @@ func (a *App) createBackupArchive() (string, error) {
 	// Repos (bare repo dirs)
 	if repoRoot := a.Cfg.RepoRoot; repoRoot != "" {
 		_ = filepath.Walk(repoRoot, func(p string, info os.FileInfo, err error) error {
-			if err != nil || !info.Mode().IsDir() {
+			if err != nil || !info.Mode().IsRegular() {
 				return nil
 			}
-			if p == repoRoot {
-				return nil
-			}
-			return filepath.Walk(p, func(f string, fi os.FileInfo, err error) error {
-				if err != nil || fi.IsDir() {
-					return nil
-				}
-				return addFile(f)
-			})
+			return addFile(p)
 		})
 	}
 
