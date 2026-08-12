@@ -104,7 +104,6 @@ func (a *App) handleGitRPC(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handlePreReceive(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	repoPath := r.URL.Query().Get("repo")
 	lines := strings.Split(strings.TrimSpace(string(body)), "\n")
 	for _, line := range lines {
 		fields := strings.Fields(line)
@@ -120,7 +119,6 @@ func (a *App) handlePreReceive(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	_ = repoPath
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 

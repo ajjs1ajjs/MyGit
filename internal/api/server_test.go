@@ -521,3 +521,220 @@ func TestCookieSession(t *testing.T) {
 }
 
 var appRepoRoot string
+
+// pushFile clones a bare repo, commits a file on main and pushes it back.
+func pushFile(t *testing.T, repoDir, name, content string) {
+	t.Helper()
+	work := t.TempDir()
+	gitCmd(t, work, "clone", "-q", repoDir, filepath.Join(work, "wc"))
+	wc := filepath.Join(work, "wc")
+	gitCmd(t, wc, "config", "user.email", "alice@example.com")
+	gitCmd(t, wc, "config", "user.name", "alice")
+	gitCmd(t, wc, "checkout", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(wc, name), []byte(content), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	gitCmd(t, wc, "add", ".")
+	gitCmd(t, wc, "commit", "-q", "-m", "add "+name)
+	gitCmd(t, wc, "push", "-q", "-u", "origin", "main")
+}
+
+// TestUsernameTraversalRejected guards against path traversal via the
+// registration endpoint: a username containing path separators or dot-segments
+// must be rejected before it can reach filepath.Join for repo paths.
+func TestUsernameTraversalRejected(t *testing.T) {
+	_, base, _ := newTestApp(t)
+	for _, name := range []string{"../evil", "..", ".", "a/b", "a\\b", "-dash", ".hidden", "..foo"} {
+		resp, err := http.Post(base+"/api/v1/auth/register/", "application/json",
+			strings.NewReader(fmt.Sprintf(`{"username":%q,"email":%q,"password":"password123"}`, name, name+"@x.com")))
+		if err != nil {
+			t.Fatalf("register %q: %v", name, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 400 {
+			t.Fatalf("register username %q = %d, want 400", name, resp.StatusCode)
+		}
+	}
+}
+
+// TestBlobByRefPath verifies the sha=0 sentinel resolves ref:path (README and
+// file views) instead of attempting to read a bogus "0" object.
+func TestBlobByRefPath(t *testing.T) {
+	_, base, repoRoot := newTestApp(t)
+	token := registerAndLogin(t, base)
+	authReq("POST", base+"/api/v1/projects/", token, map[string]any{"name": "blob-test", "visibility": "public"})
+	pushFile(t, filepath.Join(repoRoot, "alice", "blob-test.git"), "README.md", "# Hello\nworld\n")
+
+	resp, b := authReq("GET", base+"/api/v1/projects/1/blobs/0/?ref=main&path=README.md", token, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("blob = %d: %s", resp.StatusCode, b)
+	}
+	if !strings.Contains(string(b), "# Hello") {
+		t.Fatalf("blob content missing: %s", b)
+	}
+
+	// a real blob sha must still work
+	blobSHA := gitCmd(t, filepath.Join(repoRoot, "alice", "blob-test.git"), "rev-parse", "main:README.md")
+	resp, b = authReq("GET", base+"/api/v1/projects/1/blobs/"+strings.TrimSpace(blobSHA)+"/", token, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "# Hello") {
+		t.Fatalf("blob by sha = %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestGuestCannotMutateRepo guards authorization: creating or deleting a branch
+// (a write to the repo) requires developer role (>=30), not just read (10).
+func TestGuestCannotMutateRepo(t *testing.T) {
+	app, base, repoRoot := newTestApp(t)
+	alice := registerAndLogin(t, base)
+	authReq("POST", base+"/api/v1/projects/", alice, map[string]any{"name": "authz", "visibility": "public"})
+	pushFile(t, filepath.Join(repoRoot, "alice", "authz.git"), "a.txt", "x")
+
+	http.Post(base+"/api/v1/auth/register/", "application/json",
+		strings.NewReader(`{"username":"bob","email":"bob@example.com","password":"password123"}`))
+	var bobLogin struct {
+		Access string `json:"access"`
+	}
+	respLogin, err := http.Post(base+"/api/v1/auth/login/", "application/json",
+		strings.NewReader(`{"username":"bob","password":"password123"}`))
+	if err != nil {
+		t.Fatalf("bob login: %v", err)
+	}
+	defer respLogin.Body.Close()
+	_ = json.NewDecoder(respLogin.Body).Decode(&bobLogin)
+	bob := bobLogin.Access
+
+	bobUser, _ := app.Store.GetUserByUsername("bob")
+	if bobUser == nil {
+		t.Fatalf("bob not found")
+	}
+	if err := app.Store.SetAccess(bobUser.ID, 1, 10); err != nil {
+		t.Fatalf("grant guest: %v", err)
+	}
+
+	// bob (guest) must be denied
+	resp, b := authReq("POST", base+"/api/v1/projects/1/branches/", bob, map[string]any{"name": "bob-branch", "ref": "main"})
+	if resp.StatusCode != 403 {
+		t.Fatalf("guest create branch = %d (%s), want 403", resp.StatusCode, b)
+	}
+	resp, b = authReq("DELETE", base+"/api/v1/projects/1/branches/main/", bob, nil)
+	if resp.StatusCode != 403 {
+		t.Fatalf("guest delete branch = %d (%s), want 403", resp.StatusCode, b)
+	}
+
+	// owner may create a branch
+	resp, b = authReq("POST", base+"/api/v1/projects/1/branches/", alice, map[string]any{"name": "dev", "ref": "main"})
+	if resp.StatusCode != 201 {
+		t.Fatalf("owner create branch = %d (%s), want 201", resp.StatusCode, b)
+	}
+}
+
+// TestWebhookSecretMasked guards against leaking the signing secret to any
+// repo reader.
+func TestWebhookSecretMasked(t *testing.T) {
+	_, base, _ := newTestApp(t)
+	token := registerAndLogin(t, base)
+	authReq("POST", base+"/api/v1/projects/", token, map[string]any{"name": "hooks"})
+	resp, b := authReq("POST", base+"/api/v1/projects/1/hooks/", token, map[string]any{"url": "https://example.com/hook", "secret": "s3cr3t-value"})
+	if resp.StatusCode != 201 {
+		t.Fatalf("create hook = %d: %s", resp.StatusCode, b)
+	}
+	resp, b = authReq("GET", base+"/api/v1/projects/1/hooks/", token, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("list hooks = %d: %s", resp.StatusCode, b)
+	}
+	if strings.Contains(string(b), "s3cr3t-value") {
+		t.Fatalf("webhook secret leaked: %s", b)
+	}
+	if !strings.Contains(string(b), "has_secret") {
+		t.Fatalf("expected has_secret flag: %s", b)
+	}
+}
+
+// TestCommitShape verifies the commit JSON matches the frontend contract
+// (author object + committed_at date).
+func TestCommitShape(t *testing.T) {
+	_, base, repoRoot := newTestApp(t)
+	token := registerAndLogin(t, base)
+	authReq("POST", base+"/api/v1/projects/", token, map[string]any{"name": "shape"})
+	pushFile(t, filepath.Join(repoRoot, "alice", "shape.git"), "a.txt", "x")
+	resp, b := authReq("GET", base+"/api/v1/projects/1/commits/", token, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("commits = %d: %s", resp.StatusCode, b)
+	}
+	if !strings.Contains(string(b), `"author":{"name":`) {
+		t.Fatalf("expected author object: %s", b)
+	}
+	if !strings.Contains(string(b), `"committed_at":`) {
+		t.Fatalf("expected committed_at: %s", b)
+	}
+	// branches/tags return objects with name+sha, not bare strings
+	resp, b = authReq("GET", base+"/api/v1/projects/1/branches/", token, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(b), `"sha":`) {
+		t.Fatalf("branches = %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestWikiCRUD covers the wiki list/create/update endpoints.
+func TestWikiCRUD(t *testing.T) {
+	_, base, _ := newTestApp(t)
+	token := registerAndLogin(t, base)
+	authReq("POST", base+"/api/v1/projects/", token, map[string]any{"name": "wiki-repo"})
+
+	resp, b := authReq("POST", base+"/api/v1/projects/1/wiki/", token, map[string]any{"slug": "home", "title": "Home", "content": "# Hi"})
+	if resp.StatusCode != 201 {
+		t.Fatalf("create wiki = %d: %s", resp.StatusCode, b)
+	}
+	resp, b = authReq("GET", base+"/api/v1/projects/1/wiki/", token, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "Home") {
+		t.Fatalf("list wiki = %d: %s", resp.StatusCode, b)
+	}
+	resp, b = authReq("PUT", base+"/api/v1/projects/1/wiki/home/", token, map[string]any{"title": "Updated", "content": "x"})
+	if resp.StatusCode != 200 {
+		t.Fatalf("update wiki = %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestMRCommentsAndDiff covers MR comments and the parsed MR diff.
+func TestMRCommentsAndDiff(t *testing.T) {
+	_, base, repoRoot := newTestApp(t)
+	token := registerAndLogin(t, base)
+	authReq("POST", base+"/api/v1/projects/", token, map[string]any{"name": "mrdemo", "visibility": "public"})
+	repoDir := filepath.Join(repoRoot, "alice", "mrdemo.git")
+	pushFile(t, repoDir, "a.txt", "base")
+
+	work := t.TempDir()
+	gitCmd(t, work, "clone", "-q", repoDir, filepath.Join(work, "wc"))
+	wc := filepath.Join(work, "wc")
+	gitCmd(t, wc, "config", "user.email", "alice@example.com")
+	gitCmd(t, wc, "config", "user.name", "alice")
+	gitCmd(t, wc, "checkout", "-q", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(wc, "b.txt"), []byte("new"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	gitCmd(t, wc, "add", ".")
+	gitCmd(t, wc, "commit", "-q", "-m", "feature work")
+	gitCmd(t, wc, "push", "-q", "-u", "origin", "feature")
+
+	resp, b := authReq("POST", base+"/api/v1/projects/1/merge_requests/", token, map[string]any{
+		"source_branch": "feature", "target_branch": "main", "title": "MR",
+	})
+	if resp.StatusCode != 201 {
+		t.Fatalf("create MR = %d: %s", resp.StatusCode, b)
+	}
+
+	resp, b = authReq("POST", base+"/api/v1/projects/1/merge_requests/1/comments/", token, map[string]any{"body": "please review"})
+	if resp.StatusCode != 201 {
+		t.Fatalf("add comment = %d: %s", resp.StatusCode, b)
+	}
+	resp, b = authReq("GET", base+"/api/v1/projects/1/merge_requests/1/comments/", token, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "please review") {
+		t.Fatalf("list comments = %d: %s", resp.StatusCode, b)
+	}
+	if !strings.Contains(string(b), `"author_username":"alice"`) {
+		t.Fatalf("comment author missing: %s", b)
+	}
+	resp, b = authReq("GET", base+"/api/v1/projects/1/merge_requests/1/diff/", token, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "b.txt") {
+		t.Fatalf("mr diff = %d: %s", resp.StatusCode, b)
+	}
+}

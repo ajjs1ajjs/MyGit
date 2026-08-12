@@ -110,3 +110,30 @@ func CheckPasswordPolicy(pw string) bool {
 func NormalizeUsername(u string) string {
 	return strings.TrimSpace(u)
 }
+
+// ValidUsername reports whether a username is safe to embed in a filesystem
+// path (owner directories) and in URLs. Allowing anything else — especially
+// "/", "\\", ".." or a leading "." — would let a registered username escape
+// the repository root via filepath.Join and write/delete outside the sandbox.
+func ValidUsername(u string) bool {
+	if u == "" || len(u) > 100 {
+		return false
+	}
+	// First char must be a letter or digit (rejects ".", "..", "-foo", "_foo",
+	// which could otherwise be confused with dot-segments or CLI options).
+	first := u[0]
+	if !(first >= 'a' && first <= 'z' || first >= 'A' && first <= 'Z' || first >= '0' && first <= '9') {
+		return false
+	}
+	for _, c := range u {
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9':
+		case c == '_' || c == '-' || c == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}

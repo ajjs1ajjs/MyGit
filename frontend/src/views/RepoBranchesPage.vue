@@ -31,7 +31,7 @@ watch(repoId, async (id) => {
   if (!id) return;
   try {
     const data = await api.get(`/projects/${id}/branches/`);
-    branches.value = data?.branches || [];
+    branches.value = data || [];
   } catch {}
 });
 </script>

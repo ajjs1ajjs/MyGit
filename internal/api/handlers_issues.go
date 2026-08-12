@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/ajjs1ajjs/MyGit/internal/git"
 	"github.com/ajjs1ajjs/MyGit/internal/storage"
 )
 
@@ -25,6 +26,9 @@ func (a *App) handleListIssues(w http.ResponseWriter, r *http.Request) {
 	if issues == nil {
 		issues = []storage.Issue{}
 	}
+	for i := range issues {
+		issues[i].AuthorUsername = usernameOf(a.Store, issues[i].AuthorID)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": issues})
 }
 
@@ -43,7 +47,7 @@ func (a *App) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	issue := &storage.Issue{
-		RepositoryID: repo.ID, AuthorID: p.UserID,
+		RepositoryID: repo.ID, AuthorID: p.UserID, AuthorUsername: p.Username,
 		Title: body.Title, Description: body.Description, State: "open",
 	}
 	id, num, err := a.Store.CreateIssue(issue)
@@ -67,6 +71,7 @@ func (a *App) handleGetIssue(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "Issue not found")
 		return
 	}
+	issue.AuthorUsername = usernameOf(a.Store, issue.AuthorID)
 	writeJSON(w, http.StatusOK, issue)
 }
 
@@ -114,10 +119,20 @@ func (a *App) handleListIssueComments(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "Database error")
 		return
 	}
-	if comments == nil {
-		comments = []map[string]any{}
+	out := make([]map[string]any, 0, len(comments))
+	for _, c := range comments {
+		var authorID int64
+		if v, ok := c["author_id"].(int64); ok {
+			authorID = v
+		}
+		m := make(map[string]any, len(c))
+		for k, v := range c {
+			m[k] = v
+		}
+		m["author_username"] = usernameOf(a.Store, authorID)
+		out = append(out, m)
 	}
-	writeJSON(w, http.StatusOK, comments)
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (a *App) handleAddIssueComment(w http.ResponseWriter, r *http.Request) {
@@ -144,7 +159,7 @@ func (a *App) handleAddIssueComment(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "Database error")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"id": id})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "body": body.Body, "author_username": p.Username, "created_at": storage.Now()})
 }
 
 // --- merge requests ---
@@ -161,6 +176,9 @@ func (a *App) handleListMRs(w http.ResponseWriter, r *http.Request) {
 	}
 	if mrs == nil {
 		mrs = []storage.MergeRequest{}
+	}
+	for i := range mrs {
+		mrs[i].AuthorUsername = usernameOf(a.Store, mrs[i].AuthorID)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": mrs})
 }
@@ -186,7 +204,7 @@ func (a *App) handleCreateMR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mr := &storage.MergeRequest{
-		RepositoryID: repo.ID, AuthorID: p.UserID,
+		RepositoryID: repo.ID, AuthorID: p.UserID, AuthorUsername: p.Username,
 		SourceBranch: body.SourceBranch, TargetBranch: body.TargetBranch,
 		Title: body.Title, Description: body.Description, State: "open",
 	}
@@ -211,7 +229,170 @@ func (a *App) handleGetMR(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "Merge request not found")
 		return
 	}
+	mr.AuthorUsername = usernameOf(a.Store, mr.AuthorID)
 	writeJSON(w, http.StatusOK, mr)
+}
+
+func (a *App) handleListMRComments(w http.ResponseWriter, r *http.Request) {
+	repo := a.requireRepoAccess(w, r)
+	if repo == nil {
+		return
+	}
+	num := int(mustPathInt(r, "number"))
+	mr, _ := a.Store.GetMR(repo.ID, num)
+	if mr == nil {
+		writeErr(w, http.StatusNotFound, "Merge request not found")
+		return
+	}
+	comments, err := a.Store.ListMRComments(mr.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	out := make([]map[string]any, 0, len(comments))
+	for _, c := range comments {
+		out = append(out, map[string]any{
+			"id": c.ID, "body": c.Body, "created_at": c.CreatedAt,
+			"author_username": usernameOf(a.Store, c.AuthorID),
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *App) handleAddMRComment(w http.ResponseWriter, r *http.Request) {
+	repo := a.requireRepoAccess(w, r)
+	if repo == nil {
+		return
+	}
+	p := a.principal(r)
+	num := int(mustPathInt(r, "number"))
+	mr, _ := a.Store.GetMR(repo.ID, num)
+	if mr == nil {
+		writeErr(w, http.StatusNotFound, "Merge request not found")
+		return
+	}
+	var body struct {
+		Body string `json:"body"`
+	}
+	if err := jsonDecode(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	id, err := a.Store.AddMRComment(mr.ID, p.UserID, body.Body)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "author_username": p.Username})
+}
+
+func (a *App) handleMRDiff(w http.ResponseWriter, r *http.Request) {
+	repo := a.requireRepoAccess(w, r)
+	if repo == nil {
+		return
+	}
+	num := int(mustPathInt(r, "number"))
+	mr, _ := a.Store.GetMR(repo.ID, num)
+	if mr == nil {
+		writeErr(w, http.StatusNotFound, "Merge request not found")
+		return
+	}
+	dir := a.repoDir(repo)
+	// Compare the merge-base against the source branch so a stale target
+	// doesn't produce a misleading diff.
+	var diffs []git.FileDiff
+	if base, err := a.Git.RefSHA(dir, mr.TargetBranch); err == nil {
+		if mb, err := a.Git.RefSHA(dir, mr.SourceBranch); err == nil {
+			diffs, _ = a.Git.DiffFiles(dir, base, mb)
+		}
+	}
+	if diffs == nil {
+		diffs = []git.FileDiff{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"diffs": diffs})
+}
+
+// --- wiki ---
+
+func (a *App) handleListWiki(w http.ResponseWriter, r *http.Request) {
+	repo := a.requireRepoAccess(w, r)
+	if repo == nil {
+		return
+	}
+	pages, err := a.Store.ListWiki(repo.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	out := make([]map[string]any, 0, len(pages))
+	for _, p := range pages {
+		out = append(out, map[string]any{
+			"slug": p.Slug, "title": p.Title, "content": p.Content, "created_at": p.CreatedAt,
+			"author_username": usernameOf(a.Store, p.AuthorID),
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *App) handleCreateWiki(w http.ResponseWriter, r *http.Request) {
+	repo := a.requireRepoWrite(w, r, 30)
+	if repo == nil {
+		return
+	}
+	p := a.principal(r)
+	var body struct {
+		Slug    string `json:"slug"`
+		Title   string `json:"title"`
+		Content string `json:"content"`
+	}
+	if err := jsonDecode(r, &body); err != nil || strings.TrimSpace(body.Slug) == "" {
+		writeErr(w, http.StatusBadRequest, "slug is required")
+		return
+	}
+	slug := strings.TrimSpace(body.Slug)
+	if strings.ContainsAny(slug, "/\\") || strings.HasPrefix(slug, ".") {
+		writeErr(w, http.StatusBadRequest, "Invalid wiki slug")
+		return
+	}
+	if err := a.Store.UpsertWiki(repo.ID, p.UserID, slug, body.Title, body.Content); err != nil {
+		writeErr(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"slug": slug})
+}
+
+func (a *App) handleUpdateWiki(w http.ResponseWriter, r *http.Request) {
+	repo := a.requireRepoWrite(w, r, 30)
+	if repo == nil {
+		return
+	}
+	p := a.principal(r)
+	var body struct {
+		Title   string `json:"title"`
+		Content string `json:"content"`
+	}
+	if err := jsonDecode(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	slug := urlParam(r, "slug")
+	if err := a.Store.UpsertWiki(repo.ID, p.UserID, slug, body.Title, body.Content); err != nil {
+		writeErr(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"slug": slug})
+}
+
+// usernameOf resolves a user ID to a username, returning "" when unknown.
+func usernameOf(store *storage.Store, userID int64) string {
+	if userID <= 0 {
+		return ""
+	}
+	u, _ := store.GetUserByID(userID)
+	if u == nil {
+		return ""
+	}
+	return u.Username
 }
 
 func (a *App) handleMergeMR(w http.ResponseWriter, r *http.Request) {
@@ -262,10 +443,16 @@ func (a *App) handleListWebhooks(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "Database error")
 		return
 	}
-	if hooks == nil {
-		hooks = []storage.Webhook{}
+	// Never expose the signing secret to repo readers.
+	out := make([]map[string]any, 0, len(hooks))
+	for _, h := range hooks {
+		out = append(out, map[string]any{
+			"id": h.ID, "url": h.URL, "events": h.Events,
+			"is_active": h.IsActive, "created_at": h.CreatedAt,
+			"has_secret": h.Secret != "",
+		})
 	}
-	writeJSON(w, http.StatusOK, hooks)
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (a *App) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {

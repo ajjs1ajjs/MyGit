@@ -100,7 +100,7 @@ const tags = ref<any[]>([]);
 const tree = ref<any[]>([]);
 const readmeContent = ref("");
 
-const cloneUrl = computed(() => `http://${window.location.host}/${repo.value?.path}.git`);
+const cloneUrl = computed(() => `${window.location.protocol}//${window.location.host}/${repo.value?.path}.git`);
 
 const renderedReadme = computed(() => renderMarkdown(readmeContent.value));
 

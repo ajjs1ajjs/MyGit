@@ -41,7 +41,7 @@ watch(repoId, async (id) => {
   if (!id) return;
   try {
     const data = await api.get(`/projects/${id}/commits/?ref=${branchRef}`);
-    commits.value = data?.commits || [];
+    commits.value = data || [];
   } catch {}
 });
 </script>

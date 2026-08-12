@@ -1,6 +1,5 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { useAuthStore } from "../stores/auth";
-import { api } from "../api/client";
 
 const RepoDetail = () => import("../views/RepoDetailPage.vue");
 
@@ -43,11 +42,11 @@ const router = createRouter({ history: createWebHistory(), routes });
 
 router.beforeEach(async (to, from) => {
   const auth = useAuthStore();
-  const token = localStorage.getItem("access_token");
 
-  if (token && !auth.user) {
-    try { auth.user = await api.get("/users/me/"); }
-    catch { auth.logout(); return "/auth/login"; }
+  // Sessions live in HttpOnly cookies (set by the server). If the store is
+  // empty but a session cookie exists, hydrate it from /me.
+  if (!auth.user) {
+    await auth.fetchMe();
   }
 
   if (auth.user?.must_change_password && to.name !== "change-password") {

@@ -148,7 +148,7 @@ function getBreadcrumbLink(index: number) {
 
 function getRawLink() {
   const ref = refParam || "main";
-  return `/${repoUsername}/${repoName}/-/raw/${ref}/${encodeURIComponent(filePath)}`;
+  return `/api/v1/projects/${repoId.value}/raw/?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(filePath)}`;
 }
 
 function getBlameLink() {
@@ -156,12 +156,18 @@ function getBlameLink() {
   return `/${repoUsername}/${repoName}/-/blame/${ref}?path=${encodeURIComponent(filePath)}`;
 }
 
+function escapeHtml(s: string) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 function highlightedLine(line: string, index: number): string {
   if (!content.value) return "";
   try {
     return hljs.highlight(line, { language: language.value }).value;
   } catch (e) {
-    return line;
+    // hljs.highlight escapes its output, but the fallback path must NOT return
+    // raw content: it is rendered via v-html and would be a stored XSS sink.
+    return escapeHtml(line);
   }
 }
 

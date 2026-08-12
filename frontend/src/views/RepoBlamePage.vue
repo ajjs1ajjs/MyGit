@@ -85,7 +85,7 @@ function getBreadcrumbLink(index: number) {
 
 function getRawLink() {
   const ref = refParam || "main";
-  return `/${repoUsername}/${repoName}/-/raw/${ref}/${encodeURIComponent(filePath)}`;
+  return `/api/v1/projects/${repoId.value}/raw/?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(filePath)}`;
 }
 
 function formatDate(dateStr: string) {

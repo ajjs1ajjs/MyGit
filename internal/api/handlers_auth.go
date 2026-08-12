@@ -47,6 +47,12 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "username and password are required")
 		return
 	}
+	// Reject anything that could escape the repos root through filepath.Join
+	// (.., /, \\, leading dot). See auth.ValidUsername.
+	if !auth.ValidUsername(username) {
+		writeErr(w, http.StatusBadRequest, "Username may only contain letters, digits, '_', '-' and '.' and must start with a letter or digit")
+		return
+	}
 	if !auth.CheckPasswordPolicy(body.Password) {
 		writeErr(w, http.StatusBadRequest, "Password must be at least 8 characters")
 		return
@@ -70,18 +76,11 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	// Only the first registered user becomes superuser (bootstrap); everyone
 	// else registers as a regular user to preserve the authorization model.
-	count, err := a.Store.CountUsers()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "Database error")
-		return
-	}
-	isSuperuser := 0
-	if count == 0 {
-		isSuperuser = 1
-	}
-	id, err := a.Store.CreateUser(&storage.User{
+	// The count+insert runs under a write lock, so concurrent first
+	// registrations cannot both claim superuser.
+	id, _, err := a.Store.RegisterUser(&storage.User{
 		Username: username, Email: email, PasswordHash: hash,
-		FullName: username, IsActive: 1, IsSuperuser: isSuperuser,
+		FullName: username, IsActive: 1,
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "Database error")

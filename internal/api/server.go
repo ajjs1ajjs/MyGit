@@ -111,9 +111,15 @@ func (a *App) Handler() http.Handler {
 		r.With(a.withAuth).Post("/{id}/merge_requests/", a.handleCreateMR)
 		r.With(a.withAuth).Get("/{id}/merge_requests/{number}/", a.handleGetMR)
 		r.With(a.withAuth).Post("/{id}/merge_requests/{number}/merge/", a.handleMergeMR)
+		r.With(a.withAuth).Get("/{id}/merge_requests/{number}/comments/", a.handleListMRComments)
+		r.With(a.withAuth).Post("/{id}/merge_requests/{number}/comments/", a.handleAddMRComment)
+		r.With(a.withAuth).Get("/{id}/merge_requests/{number}/diff/", a.handleMRDiff)
 		r.With(a.withAuth).Get("/{id}/hooks/", a.handleListWebhooks)
 		r.With(a.withAuth).Post("/{id}/hooks/", a.handleCreateWebhook)
 		r.With(a.withAuth).Delete("/{id}/hooks/{hookID}/", a.handleDeleteWebhook)
+		r.With(a.withAuth).Get("/{id}/wiki/", a.handleListWiki)
+		r.With(a.withAuth).Post("/{id}/wiki/", a.handleCreateWiki)
+		r.With(a.withAuth).Put("/{id}/wiki/{slug}/", a.handleUpdateWiki)
 	})
 
 	// notifications / search
@@ -243,12 +249,25 @@ func (a *App) withAuth(next http.Handler) http.Handler {
 func (a *App) withInternal(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authz := r.Header.Get("Authorization")
-		if !strings.HasPrefix(authz, "Bearer ") || strings.TrimPrefix(authz, "Bearer ") != a.Cfg.InternalToken {
+		if !strings.HasPrefix(authz, "Bearer ") || !constantTimeEqual(strings.TrimPrefix(authz, "Bearer "), a.Cfg.InternalToken) {
 			writeErr(w, http.StatusForbidden, "Invalid internal token")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// constantTimeEqual compares two strings in constant time to avoid leaking the
+// internal token length/prefix via timing.
+func constantTimeEqual(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	var v byte
+	for i := 0; i < len(a); i++ {
+		v |= a[i] ^ b[i]
+	}
+	return v == 0
 }
 
 func (a *App) principal(r *http.Request) *principal {
@@ -263,6 +282,11 @@ func (a *App) withSecurity(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		// HSTS only applies when TLS is terminated by this process.
+		if r.TLS != nil {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
 		// Vue injects some styles via inline style attributes; scripts are fully
 		// bundled so 'self' is sufficient for script-src.
 		w.Header().Set("Content-Security-Policy",
@@ -313,5 +337,3 @@ func (w *statusWriter) ReadFrom(r io.Reader) (int64, error) {
 	}
 	return io.Copy(w.ResponseWriter, r)
 }
-
-var _ = context.Background

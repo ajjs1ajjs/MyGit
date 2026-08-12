@@ -78,6 +78,28 @@ elif command -v wget >/dev/null 2>&1; then
 else
     echo "ERROR: curl or wget required"; rm -f "$TMP_BIN"; exit 1
 fi
+
+# Best-effort integrity check: verify the binary against the published
+# checksums.txt when it is available. This protects the update path from a
+# tampered or truncated artifact.
+CHECKSUM_URL="${DOWNLOAD_URL%/*}/checksums.txt"
+if command -v sha256sum >/dev/null 2>&1; then
+    TMP_SUM="$(mktemp)"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$CHECKSUM_URL" -o "$TMP_SUM" 2>/dev/null || true
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -O "$TMP_SUM" "$CHECKSUM_URL" 2>/dev/null || true
+    fi
+    if [ -s "$TMP_SUM" ]; then
+        EXPECTED="$(grep " ${BINARY_NAME}\$" "$TMP_SUM" | awk '{print $1}')"
+        ACTUAL="$(sha256sum "$TMP_BIN" | awk '{print $1}')"
+        if [ -n "$EXPECTED" ] && [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "ERROR: checksum mismatch for ${BINARY_NAME}"; rm -f "$TMP_BIN" "$TMP_SUM"; exit 1
+        fi
+    fi
+    rm -f "$TMP_SUM"
+fi
+
 chmod +x "$TMP_BIN"
 "$TMP_BIN" --version >/dev/null 2>&1 || { echo "ERROR: not a valid binary"; rm -f "$TMP_BIN"; exit 1; }
 

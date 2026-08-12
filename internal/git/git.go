@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -145,20 +146,41 @@ func (b *Backend) DefaultBranch(dir string) string {
 	return strings.TrimSpace(out)
 }
 
-func (b *Backend) Branches(dir string) ([]string, error) {
-	out, err := run(b.Binary, dir, "for-each-ref", "--format=%(refname:short)", "refs/heads/")
-	if err != nil {
-		return nil, err
-	}
-	return nonEmptyLines(out), nil
+// Ref is a named branch or tag with its resolved commit SHA.
+type Ref struct {
+	Name string `json:"name"`
+	SHA  string `json:"sha"`
 }
 
-func (b *Backend) Tags(dir string) ([]string, error) {
-	out, err := run(b.Binary, dir, "for-each-ref", "--format=%(refname:short)", "refs/tags/")
+func (b *Backend) Branches(dir string) ([]Ref, error) {
+	out, err := run(b.Binary, dir, "for-each-ref", "--format=%(refname:short)%00%(objectname)", "refs/heads/")
 	if err != nil {
 		return nil, err
 	}
-	return nonEmptyLines(out), nil
+	return parseRefs(out), nil
+}
+
+func (b *Backend) Tags(dir string) ([]Ref, error) {
+	out, err := run(b.Binary, dir, "for-each-ref", "--format=%(refname:short)%00%(objectname)", "refs/tags/")
+	if err != nil {
+		return nil, err
+	}
+	return parseRefs(out), nil
+}
+
+func parseRefs(out string) []Ref {
+	var refs []Ref
+	for _, line := range strings.Split(out, "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\x00", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		refs = append(refs, Ref{Name: strings.TrimSpace(parts[0]), SHA: strings.TrimSpace(parts[1])})
+	}
+	return refs
 }
 
 // Tree lists the tree at ref/path. Non-recursive shows top-level entries
@@ -186,6 +208,7 @@ type TreeEntry struct {
 	OID  string `json:"oid"`
 	Size int64  `json:"size"`
 	Path string `json:"path"`
+	Name string `json:"name"`
 }
 
 func parseTree(out string) []TreeEntry {
@@ -203,7 +226,11 @@ func parseTree(out string) []TreeEntry {
 		if len(meta) < 3 {
 			continue
 		}
-		entry := TreeEntry{Mode: meta[0], Type: meta[1], OID: meta[2], Path: line[tabIdx+1:]}
+		path := line[tabIdx+1:]
+		entry := TreeEntry{Mode: meta[0], Type: meta[1], OID: meta[2], Path: path, Name: path}
+		if i := strings.LastIndexByte(path, '/'); i >= 0 {
+			entry.Name = path[i+1:]
+		}
 		if len(meta) >= 4 {
 			fmt.Sscanf(meta[3], "%d", &entry.Size)
 		}
@@ -237,14 +264,19 @@ func (b *Backend) BlobAtSHA(dir, sha string) ([]byte, error) {
 	return cmd.Output()
 }
 
+type CommitAuthor struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
 type Commit struct {
-	SHA       string   `json:"sha"`
-	ShortSHA  string   `json:"short_sha"`
-	Message   string   `json:"message"`
-	Author    string   `json:"author"`
-	Email     string   `json:"email"`
-	Timestamp string   `json:"timestamp"`
-	Parents   []string `json:"parents"`
+	SHA       string       `json:"sha"`
+	ShortSHA  string       `json:"short_sha"`
+	Message   string       `json:"message"`
+	Author    CommitAuthor `json:"author"`
+	Timestamp string       `json:"timestamp"`
+	Committed string       `json:"committed_at"`
+	Parents   []string     `json:"parents"`
 }
 
 func (b *Backend) Commits(dir, ref string, limit int) ([]Commit, error) {
@@ -280,15 +312,16 @@ func (b *Backend) Commits(dir, ref string, limit int) ([]Commit, error) {
 			sha = head[0]
 		}
 		commits = append(commits, Commit{
-			SHA: sha, ShortSHA: shortSHA(sha), Author: parts[1],
-			Email: parts[2], Timestamp: parts[3], Message: parts[4], Parents: parents,
+			SHA: sha, ShortSHA: shortSHA(sha), Author: CommitAuthor{Name: parts[1], Email: parts[2]},
+			Timestamp: parts[3], Committed: commitTime(parts[3]), Message: parts[4], Parents: parents,
 		})
 	}
 	return commits, nil
 }
 
 func (b *Backend) CommitDetail(dir, sha string) (*Commit, error) {
-	out, err := run(b.Binary, dir, "log", "-1", "--format=%H|%an|%ae|%at|%B", sha)
+	// First pass: parents via %P.
+	out, err := run(b.Binary, dir, "log", "-1", "--format=%H|%an|%ae|%at|%P", sha)
 	if err != nil {
 		return nil, err
 	}
@@ -300,18 +333,178 @@ func (b *Backend) CommitDetail(dir, sha string) (*Commit, error) {
 	if len(parts) < 5 {
 		return nil, fmt.Errorf("bad commit format")
 	}
+	parents := []string{}
+	if p := strings.TrimSpace(parts[4]); p != "" {
+		parents = strings.Fields(p)
+	}
+	// Second pass: full multi-line body via %B.
+	out, err = run(b.Binary, dir, "log", "-1", "--format=%H|%an|%ae|%at|%B", sha)
+	if err != nil {
+		return nil, err
+	}
+	lines = strings.Split(out, "\n")
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("commit not found")
+	}
+	parts = strings.SplitN(lines[0], "|", 5)
+	if len(parts) < 5 {
+		return nil, fmt.Errorf("bad commit format")
+	}
 	return &Commit{
-		SHA: parts[0], ShortSHA: shortSHA(parts[0]), Author: parts[1],
-		Email: parts[2], Timestamp: parts[3], Message: strings.Join(lines[1:], "\n"),
+		SHA: parts[0], ShortSHA: shortSHA(parts[0]), Author: CommitAuthor{Name: parts[1], Email: parts[2]},
+		Timestamp: parts[3], Committed: commitTime(parts[3]), Message: strings.Join(lines[1:], "\n"), Parents: parents,
 	}, nil
+}
+
+// commitTime converts a git unix-seconds string into an RFC3339 UTC timestamp
+// so the frontend can feed it straight to new Date().
+func commitTime(unixSeconds string) string {
+	ts, err := strconv.ParseInt(unixSeconds, 10, 64)
+	if err != nil {
+		return ""
+	}
+	return time.Unix(ts, 0).UTC().Format(time.RFC3339)
+}
+
+// FileDiff is a single file's diff within a commit/MR, shaped for the frontend
+// FileDiff component.
+type FileDiff struct {
+	Type    string `json:"type"` // A | D | M
+	OldPath string `json:"old_path"`
+	NewPath string `json:"new_path"`
+	Diff    string `json:"diff"`
 }
 
 func (b *Backend) Diff(dir, base, head string) (string, error) {
 	return run(b.Binary, dir, "diff", base, head)
 }
 
-func (b *Backend) Blame(dir, ref, path string) (string, error) {
-	return run(b.Binary, dir, "blame", ref, "--", path)
+// DiffFiles returns the parsed per-file diffs between base and head.
+func (b *Backend) DiffFiles(dir, base, head string) ([]FileDiff, error) {
+	raw, err := b.Diff(dir, base, head)
+	if err != nil {
+		return nil, err
+	}
+	return parseDiff(raw), nil
+}
+
+// parseDiff splits "git diff" text into per-file records. Each "diff --git"
+// block yields one FileDiff; paths are taken from the "--- a/.." / "+++ b/.."
+// header lines, which are unambiguous even for paths containing spaces.
+func parseDiff(raw string) []FileDiff {
+	var diffs []FileDiff
+	for _, block := range strings.Split(raw, "diff --git ") {
+		if block == "" {
+			continue
+		}
+		lines := strings.Split(block, "\n")
+		oldPath, newPath := "", ""
+		var body []string
+		for _, l := range lines[1:] {
+			switch {
+			case strings.HasPrefix(l, "--- a/"):
+				oldPath = strings.TrimPrefix(l, "--- a/")
+			case strings.HasPrefix(l, "--- /dev/null"):
+				oldPath = "/dev/null"
+			case strings.HasPrefix(l, "+++ b/"):
+				newPath = strings.TrimPrefix(l, "+++ b/")
+			case strings.HasPrefix(l, "+++ /dev/null"):
+				newPath = "/dev/null"
+			}
+			body = append(body, l)
+		}
+		if oldPath == "" && newPath == "" {
+			// Not a real file diff block (e.g. submodule or mode change header).
+			continue
+		}
+		if oldPath == "" {
+			oldPath = newPath
+		}
+		if newPath == "" {
+			newPath = oldPath
+		}
+		typ := "M"
+		switch {
+		case oldPath == "/dev/null":
+			typ = "A"
+		case newPath == "/dev/null":
+			typ = "D"
+		}
+		diffs = append(diffs, FileDiff{Type: typ, OldPath: oldPath, NewPath: newPath, Diff: strings.Join(body, "\n")})
+	}
+	return diffs
+}
+
+// BlameLine is one annotated source line from git blame --line-porcelain.
+type BlameLine struct {
+	SHA        string `json:"sha"`
+	ShortSHA   string `json:"short_sha"`
+	Author     string `json:"author"`
+	AuthorMail string `json:"author_email"`
+	Committed  string `json:"committed_at"`
+	LineNumber int    `json:"line_number"`
+	Line       string `json:"line"`
+}
+
+// Blame returns the porcelain blame of ref:path as structured lines.
+func (b *Backend) Blame(dir, ref, path string) ([]BlameLine, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, b.Binary, "blame", "--line-porcelain", ref, "--", path)
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader("")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	return parseBlame(string(out)), nil
+}
+
+// parseBlame parses `git blame --line-porcelain` output. Each line record is:
+//
+//	<sha> <orig-line> <final-line>
+//	author <name>
+//	author-mail <mail>
+//	author-time <unix>
+//	...optional headers...
+//	filename <path>
+//	\t<content>
+func parseBlame(out string) []BlameLine {
+	var res []BlameLine
+	var cur *BlameLine
+	flush := func() {
+		if cur != nil {
+			res = append(res, *cur)
+			cur = nil
+		}
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "\t") {
+			if cur != nil {
+				cur.Line = strings.TrimPrefix(line, "\t")
+			}
+			flush()
+			continue
+		}
+		if cur == nil {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 {
+				ln, _ := strconv.Atoi(fields[2])
+				cur = &BlameLine{SHA: fields[0], ShortSHA: shortSHA(fields[0]), LineNumber: ln}
+			}
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "author "):
+			cur.Author = strings.TrimPrefix(line, "author ")
+		case strings.HasPrefix(line, "author-mail "):
+			cur.AuthorMail = strings.Trim(strings.TrimPrefix(line, "author-mail "), "<>")
+		case strings.HasPrefix(line, "author-time "):
+			cur.Committed = commitTime(strings.TrimSpace(strings.TrimPrefix(line, "author-time ")))
+		}
+	}
+	flush()
+	return res
 }
 
 func (b *Backend) CountSize(dir string) int {
@@ -427,16 +620,6 @@ func (b *Backend) MergeMR(dir, sourceBranch, targetBranch string) (string, error
 		return "", err
 	}
 	return sha, nil
-}
-
-func nonEmptyLines(s string) []string {
-	var out []string
-	for _, l := range strings.Split(s, "\n") {
-		if strings.TrimSpace(l) != "" {
-			out = append(out, strings.TrimSpace(l))
-		}
-	}
-	return out
 }
 
 func shortSHA(s string) string {

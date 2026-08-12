@@ -231,6 +231,9 @@ func migrate(db *sql.DB) error {
 	if err := addColumnIfMissing(db, "users", "token_version", "INTEGER DEFAULT 0"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(db, "wiki_pages", "created_at", "TEXT DEFAULT ''"); err != nil {
+		return err
+	}
 	return nil
 }
 

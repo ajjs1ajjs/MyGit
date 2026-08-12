@@ -2,7 +2,6 @@ package storage
 
 import (
 	"database/sql"
-	"encoding/json"
 	"strings"
 )
 
@@ -44,6 +43,44 @@ func (st *Store) CreateUser(u *User) (int64, error) {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// RegisterUser inserts a user and atomically decides superuser bootstrap.
+// BEGIN IMMEDIATE takes the SQLite write lock up front, so two concurrent
+// first registrations on an empty database cannot both observe COUNT(*)=0 and
+// both become superuser.
+func (st *Store) RegisterUser(u *User) (id int64, isSuperuser bool, err error) {
+	if _, err = st.DB.Exec(`BEGIN IMMEDIATE`); err != nil {
+		return 0, false, err
+	}
+	defer func() {
+		// ROLLBACK is a harmless no-op after a successful COMMIT.
+		_, _ = st.DB.Exec(`ROLLBACK`)
+	}()
+	var n int
+	if err = st.DB.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
+		return 0, false, err
+	}
+	isSuperuser = n == 0
+	now := Now()
+	res, err := st.DB.Exec(`INSERT INTO users (username, email, password_hash, full_name, bio, is_active, is_superuser, must_change_password, token_version, created_at, updated_at)
+	  VALUES (?,?,?,?,?,?,?,?,?,?,?)`, u.Username, u.Email, u.PasswordHash, u.FullName, u.Bio,
+		u.IsActive, boolToInt(isSuperuser), u.MustChangePassword, 0, now, now)
+	if err != nil {
+		return 0, false, err
+	}
+	if _, err = st.DB.Exec(`COMMIT`); err != nil {
+		return 0, false, err
+	}
+	id, _ = res.LastInsertId()
+	return id, isSuperuser, nil
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func (st *Store) GetUserByUsername(username string) (*User, error) {
@@ -399,17 +436,18 @@ func genericUpdate(db *sql.DB, table string, id int64, fields map[string]any) er
 // --- issues ---
 
 type Issue struct {
-	ID           int64  `json:"id"`
-	RepositoryID int64  `json:"repository_id"`
-	AuthorID     int64  `json:"author_id"`
-	AssigneeID   *int64 `json:"assignee_id"`
-	MilestoneID  *int64 `json:"milestone_id"`
-	Title        string `json:"title"`
-	Description  string `json:"description"`
-	State        string `json:"state"`
-	Number       int    `json:"number"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
+	ID             int64  `json:"id"`
+	RepositoryID   int64  `json:"repository_id"`
+	AuthorID       int64  `json:"author_id"`
+	AuthorUsername string `json:"author_username"`
+	AssigneeID     *int64 `json:"assignee_id"`
+	MilestoneID    *int64 `json:"milestone_id"`
+	Title          string `json:"title"`
+	Description    string `json:"description"`
+	State          string `json:"state"`
+	Number         int    `json:"number"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
 }
 
 // CreateIssue inserts an issue and assigns its per-repository number atomically
@@ -516,6 +554,7 @@ type MergeRequest struct {
 	ID             int64  `json:"id"`
 	RepositoryID   int64  `json:"repository_id"`
 	AuthorID       int64  `json:"author_id"`
+	AuthorUsername string `json:"author_username"`
 	SourceBranch   string `json:"source_branch"`
 	TargetBranch   string `json:"target_branch"`
 	Title          string `json:"title"`
@@ -589,6 +628,84 @@ func (st *Store) UpdateMR(repoID int64, number int, fields map[string]any) error
 	}
 	args = append(args, repoID, number)
 	_, err := st.DB.Exec(`UPDATE merge_requests SET `+strings.Join(sets, ", ")+` WHERE repository_id = ? AND number = ?`, args...)
+	return err
+}
+
+// --- merge request comments ---
+
+type MRComment struct {
+	ID             int64  `json:"id"`
+	MergeRequestID int64  `json:"merge_request_id"`
+	AuthorID       int64  `json:"author_id"`
+	AuthorUsername string `json:"author_username"`
+	Body           string `json:"body"`
+	CreatedAt      string `json:"created_at"`
+}
+
+func (st *Store) AddMRComment(mrID, authorID int64, body string) (int64, error) {
+	res, err := st.DB.Exec(`INSERT INTO mr_comments (merge_request_id, author_id, body, created_at) VALUES (?,?,?,?)`,
+		mrID, authorID, body, Now())
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (st *Store) ListMRComments(mrID int64) ([]MRComment, error) {
+	rows, err := st.DB.Query(`SELECT id, merge_request_id, author_id, body, created_at FROM mr_comments WHERE merge_request_id = ? ORDER BY id`, mrID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MRComment
+	for rows.Next() {
+		var c MRComment
+		if err := rows.Scan(&c.ID, &c.MergeRequestID, &c.AuthorID, &c.Body, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// --- wiki ---
+
+type WikiPage struct {
+	ID           int64  `json:"id"`
+	RepositoryID int64  `json:"repository_id"`
+	AuthorID     int64  `json:"author_id"`
+	Slug         string `json:"slug"`
+	Title        string `json:"title"`
+	Content      string `json:"content"`
+	CreatedAt    string `json:"created_at"`
+}
+
+func (st *Store) ListWiki(repoID int64) ([]WikiPage, error) {
+	rows, err := st.DB.Query(`SELECT id, repository_id, author_id, slug, title, content, created_at FROM wiki_pages WHERE repository_id = ? ORDER BY slug`, repoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WikiPage
+	for rows.Next() {
+		var p WikiPage
+		if err := rows.Scan(&p.ID, &p.RepositoryID, &p.AuthorID, &p.Slug, &p.Title, &p.Content, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// UpsertWiki inserts a page or overwrites it when the slug already exists.
+func (st *Store) UpsertWiki(repoID, authorID int64, slug, title, content string) error {
+	now := Now()
+	if title == "" {
+		title = slug
+	}
+	_, err := st.DB.Exec(`INSERT INTO wiki_pages (repository_id, author_id, slug, title, content, created_at) VALUES (?,?,?,?,?,?)
+	  ON CONFLICT(repository_id, slug) DO UPDATE SET title = excluded.title, content = excluded.content, author_id = excluded.author_id`,
+		repoID, authorID, slug, title, content, now)
 	return err
 }
 
@@ -694,5 +811,3 @@ func (st *Store) mapRows(query string, args ...any) ([]map[string]any, error) {
 	}
 	return out, rows.Err()
 }
-
-var _ = json.Marshal

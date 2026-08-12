@@ -12,6 +12,8 @@ frontend/dist/
 
 # Database / repos
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 repos/
 

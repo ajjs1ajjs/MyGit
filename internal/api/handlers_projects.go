@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/ajjs1ajjs/MyGit/internal/auth"
 	"github.com/ajjs1ajjs/MyGit/internal/git"
 	"github.com/ajjs1ajjs/MyGit/internal/storage"
 )
@@ -117,6 +118,13 @@ func (a *App) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Repository already exists")
 		return
 	}
+	// Defense in depth: the owner component comes from the authenticated
+	// username, which registration already validates. Re-check it here so a
+	// legacy/poisoned row can never reach filepath.Join.
+	if !auth.ValidUsername(p.Username) {
+		writeErr(w, http.StatusBadRequest, "Invalid owner")
+		return
+	}
 	repo := &storage.Repository{
 		OwnerType: "user", OwnerID: p.UserID, Name: body.Name, Path: path,
 		Description: body.Description, Visibility: vis, DefaultBranch: defBranch,
@@ -183,6 +191,16 @@ func (a *App) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"detail": "updated"})
 }
 
+// repoPathParts splits a stored "owner/name" repo path and validates both
+// components so a poisoned/legacy row can never reach filepath.Join.
+func repoPathParts(path string) (string, string) {
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 || !validRepoName(parts[0]) || !validRepoName(parts[1]) {
+		return "", ""
+	}
+	return parts[0], parts[1]
+}
+
 func (a *App) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	p := a.principal(r)
 	id := mustPathInt(r, "id")
@@ -195,7 +213,12 @@ func (a *App) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "Owner access required")
 		return
 	}
-	_ = a.Git.Remove(strings.Split(repo.Path, "/")[0], strings.Split(repo.Path, "/")[1])
+	owner, name := repoPathParts(repo.Path)
+	if owner == "" || name == "" {
+		writeErr(w, http.StatusInternalServerError, "Invalid repository path")
+		return
+	}
+	_ = a.Git.Remove(owner, name)
 	_ = a.Store.DeleteRepo(id)
 	writeJSON(w, http.StatusOK, map[string]any{"detail": "deleted"})
 }
@@ -208,9 +231,17 @@ func (a *App) handleForkProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "Repository not found")
 		return
 	}
-	parts := strings.Split(repo.Path, "/")
-	srcDir := a.Git.RepoPath(parts[0], parts[1])
+	owner, name := repoPathParts(repo.Path)
+	if owner == "" || name == "" {
+		writeErr(w, http.StatusInternalServerError, "Invalid repository path")
+		return
+	}
+	srcDir := a.Git.RepoPath(owner, name)
 	newPath := p.Username + "/" + repo.Name
+	if !auth.ValidUsername(p.Username) {
+		writeErr(w, http.StatusBadRequest, "Invalid owner")
+		return
+	}
 	if existing, _ := a.Store.GetRepoByPath(newPath); existing != nil {
 		writeErr(w, http.StatusBadRequest, "A repository with this name already exists")
 		return
@@ -254,8 +285,11 @@ func (a *App) requireRepoAccess(w http.ResponseWriter, r *http.Request) *storage
 }
 
 func (a *App) repoDir(repo *storage.Repository) string {
-	parts := strings.Split(repo.Path, "/")
-	return a.Git.RepoPath(parts[0], parts[1])
+	owner, name := repoPathParts(repo.Path)
+	if owner == "" || name == "" {
+		return ""
+	}
+	return a.Git.RepoPath(owner, name)
 }
 
 func (a *App) handleTree(w http.ResponseWriter, r *http.Request) {
@@ -307,19 +341,29 @@ func (a *App) handleBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dir := a.repoDir(repo)
+	if dir == "" {
+		writeErr(w, http.StatusInternalServerError, "Invalid repository path")
+		return
+	}
 	sha := urlParam(r, "sha")
-	content, err := a.Git.BlobAtSHA(dir, sha)
+	ref := r.URL.Query().Get("ref")
+	path := r.URL.Query().Get("path")
+
+	var content []byte
+	var err error
+	if sha == "0" {
+		// The frontend uses sha=0 as a sentinel meaning "resolve ref:path".
+		if ref == "" {
+			ref = repo.DefaultBranch
+		}
+		content, err = a.Git.Blob(dir, ref, path)
+	} else {
+		content, err = a.Git.BlobAtSHA(dir, sha)
+	}
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "Blob not found")
 		return
 	}
-	ref := r.URL.Query().Get("ref")
-	if ref == "" {
-		ref = repo.DefaultBranch
-	}
-	path := r.URL.Query().Get("path")
-	_ = ref
-	_ = path
 	// Text blobs are returned verbatim (encoding "text"); arbitrary binary
 	// blobs are base64-encoded (encoding "base64") so they survive JSON
 	// round-tripping intact. The frontend decodes based on the field.
@@ -347,12 +391,15 @@ func (a *App) handleBlame(w http.ResponseWriter, r *http.Request) {
 		ref = repo.DefaultBranch
 	}
 	path := r.URL.Query().Get("path")
-	out, err := a.Git.Blame(dir, ref, path)
+	lines, err := a.Git.Blame(dir, ref, path)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "Blame failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"blame": out})
+	if lines == nil {
+		lines = []git.BlameLine{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"lines": lines})
 }
 
 func (a *App) handleCommits(w http.ResponseWriter, r *http.Request) {
@@ -367,8 +414,11 @@ func (a *App) handleCommits(w http.ResponseWriter, r *http.Request) {
 	}
 	limit := 50
 	if v := r.URL.Query().Get("page"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			limit = n * 20
+			if limit > 500 {
+				limit = 500
+			}
 		}
 	}
 	commits, err := a.Git.Commits(dir, ref, limit)
@@ -404,11 +454,15 @@ func (a *App) handleCommitDiff(w http.ResponseWriter, r *http.Request) {
 	}
 	dir := a.repoDir(repo)
 	sha := urlParam(r, "sha")
-	diff, err := a.Git.Diff(dir, sha+"^", sha)
+	diffs, err := a.Git.DiffFiles(dir, sha+"^", sha)
 	if err != nil {
-		diff, _ = a.Git.Diff(dir, "", sha)
+		// First commit in the repo has no parent; fall back to the empty tree.
+		diffs, _ = a.Git.DiffFiles(dir, "", sha)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"diff": diff})
+	if diffs == nil {
+		diffs = []git.FileDiff{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"diffs": diffs})
 }
 
 func (a *App) handleBranches(w http.ResponseWriter, r *http.Request) {
@@ -423,13 +477,28 @@ func (a *App) handleBranches(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if branches == nil {
-		branches = []string{}
+		branches = []git.Ref{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": branches})
 }
 
-func (a *App) handleCreateBranch(w http.ResponseWriter, r *http.Request) {
+// requireRepoWrite enforces a minimum role for mutating git operations.
+func (a *App) requireRepoWrite(w http.ResponseWriter, r *http.Request, minRole int) *storage.Repository {
 	repo := a.requireRepoAccess(w, r)
+	if repo == nil {
+		return nil
+	}
+	p := a.principal(r)
+	if a.Store.EffectiveRole(p.UserID, repo.ID, repo.OwnerID, p.IsSuper, repo.Visibility) < minRole {
+		writeErr(w, http.StatusForbidden, "Insufficient permissions")
+		return nil
+	}
+	return repo
+}
+
+func (a *App) handleCreateBranch(w http.ResponseWriter, r *http.Request) {
+	// Creating a branch mutates the repo — developer role or above.
+	repo := a.requireRepoWrite(w, r, 30)
 	if repo == nil {
 		return
 	}
@@ -454,7 +523,8 @@ func (a *App) handleCreateBranch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleDeleteBranch(w http.ResponseWriter, r *http.Request) {
-	repo := a.requireRepoAccess(w, r)
+	// Deleting a branch mutates the repo — developer role or above.
+	repo := a.requireRepoWrite(w, r, 30)
 	if repo == nil {
 		return
 	}
@@ -479,7 +549,7 @@ func (a *App) handleTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tags == nil {
-		tags = []string{}
+		tags = []git.Ref{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": tags})
 }
