@@ -1086,6 +1086,50 @@ func TestMRFastForward(t *testing.T) {
 	}
 }
 
+// TestRefreshEmptyBodyUsesCookie guards the SPA refresh flow: POSTing an empty
+// body with a valid refresh cookie must return 200, and without any cookie the
+// same empty body must be 401 (it used to be 400 "Invalid request body").
+func TestRefreshEmptyBodyUsesCookie(t *testing.T) {
+	_, base, _ := newTestApp(t)
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+
+	regBody := `{"username":"cookie_user","email":"cookie@example.com","password":"password123"}`
+	resp, err := client.Post(base+"/api/v1/auth/register/", "application/json", strings.NewReader(regBody))
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 201 {
+		t.Fatalf("register = %d", resp.StatusCode)
+	}
+
+	// empty body + refresh cookie -> 200
+	req, _ := http.NewRequest("POST", base+"/api/v1/auth/refresh/", nil)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("refresh with cookie = %d (%s)", resp.StatusCode, b)
+	}
+
+	// empty body, no cookie -> 401 (not 400)
+	req2, _ := http.NewRequest("POST", base+"/api/v1/auth/refresh/", nil)
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("refresh no cookie: %v", err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != 401 {
+		t.Fatalf("refresh without cookie = %d, want 401", resp2.StatusCode)
+	}
+}
+
 // TestSpaAssetsAreServed guards the SPA asset route: every /assets/* file
 // referenced by the embedded index.html must be served with a real MIME type
 // (not 404/text-plain), which used to break because the FileServer was rooted

@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.0.13] - 2026-08-12
+
+### 🐞 Виправлено
+
+- **Google Fonts блокувався CSP** — `style.css` імпортував `https://fonts.googleapis.com/...`, а CSP `style-src 'self' 'unsafe-inline'` його блокував. Зовнішній шрифт видалено (вже був системний font-stack) — застосунок тепер повністю self-contained, без зовнішніх запитів.
+- **Refresh із порожнім тілом повертав 400** — SPA шле `POST /auth/refresh/` без тіла (покладається на HttpOnly refresh cookie), а `jsonDecode` на порожньому тілі повертав 400 "Invalid request body", через що сесія не оновлювалась. Тепер порожнє тіло ігнорується: з cookie → 200, без cookie → 401.
+- **Колізія cookie між інстансами на одному хості** — імена cookie тепер включають порт (`mygit_access_<port>`, `mygit_refresh_<port>`), тож два MyGit на :8060 і :8061 не перебивають один одного (cookie scope — домен, не порт; у кожного інстансу свій JWT secret).
+- Regression тест `TestRefreshEmptyBodyUsesCookie`.
+
 ## [3.0.12] - 2026-08-12
 
 ### 🐞 Виправлено (CRITICAL для SPA)

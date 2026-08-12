@@ -1,5 +1,7 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
+
+/* No external fonts: the CSP (style-src 'self') blocks Google Fonts and the
+   app must stay fully self-contained. body uses a system font stack below. */
 
 :root {
   --g-bg: #f6f8fa;

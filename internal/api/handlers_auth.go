@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -13,10 +14,12 @@ import (
 	"github.com/ajjs1ajjs/MyGit/internal/storage"
 )
 
-const (
-	cookieAccess  = "mygit_access"
-	cookieRefresh = "mygit_refresh"
-)
+// Cookie names are namespaced by the listen port so that two MyGit instances
+// on the same host (e.g. :8060 and :8061) never overwrite each other's
+// session cookie (cookies are scoped per-domain, not per-port, and each
+// instance has its own JWT secret).
+func (a *App) accessCookie() string  { return fmt.Sprintf("mygit_access_%d", a.Cfg.Port) }
+func (a *App) refreshCookie() string { return fmt.Sprintf("mygit_refresh_%d", a.Cfg.Port) }
 
 // setAuthCookies stores the session in HttpOnly cookies so the SPA never has to
 // keep JWTs in localStorage (XSS can no longer exfiltrate a long-lived token).
@@ -24,13 +27,13 @@ const (
 // enabled over TLS so plain-http dev keeps working.
 func (a *App) setAuthCookies(w http.ResponseWriter, r *http.Request, access, refresh string) {
 	secure := r.TLS != nil
-	http.SetCookie(w, &http.Cookie{Name: cookieAccess, Value: access, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
-	http.SetCookie(w, &http.Cookie{Name: cookieRefresh, Value: refresh, Path: "/api/v1/auth", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: a.accessCookie(), Value: access, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: a.refreshCookie(), Value: refresh, Path: "/api/v1/auth", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
 }
 
 func (a *App) clearAuthCookies(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{Name: cookieAccess, Value: "", Path: "/", HttpOnly: true, MaxAge: -1})
-	http.SetCookie(w, &http.Cookie{Name: cookieRefresh, Value: "", Path: "/api/v1/auth", HttpOnly: true, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: a.accessCookie(), Value: "", Path: "/", HttpOnly: true, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: a.refreshCookie(), Value: "", Path: "/api/v1/auth", HttpOnly: true, MaxAge: -1})
 }
 
 func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -137,15 +140,14 @@ func (a *App) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Refresh string `json:"refresh"`
 	}
-	if err := jsonDecode(r, &body); err != nil {
-		writeErr(w, http.StatusBadRequest, "Invalid request body")
-		return
-	}
+	// The SPA sends an empty body and relies on the HttpOnly refresh cookie, so
+	// a missing/empty body is fine — only programmatic clients send a token.
+	_ = jsonDecode(r, &body)
 	// Accept the refresh token from the HttpOnly cookie (SPA) or the request
 	// body (programmatic clients).
 	refreshToken := body.Refresh
 	if refreshToken == "" {
-		if c, err := r.Cookie(cookieRefresh); err == nil {
+		if c, err := r.Cookie(a.refreshCookie()); err == nil {
 			refreshToken = c.Value
 		}
 	}

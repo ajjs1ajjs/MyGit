@@ -260,7 +260,7 @@ func (a *App) authenticate(r *http.Request) (*principal, error) {
 	}
 	// HttpOnly session cookie (SPA). Checked last so programmatic clients that
 	// send an explicit Authorization header take precedence.
-	if c, err := r.Cookie(cookieAccess); err == nil {
+	if c, err := r.Cookie(a.accessCookie()); err == nil {
 		if claims, err := a.Auth.Parse(c.Value, "access"); err == nil {
 			u, _ := a.Store.GetUserByID(claims.UserID)
 			if u != nil && u.IsActive == 1 && claims.Ver == int64(u.TokenVersion) {
