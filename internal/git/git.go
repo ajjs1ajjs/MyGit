@@ -62,6 +62,12 @@ func (b *Backend) Exists(owner, name string) bool {
 
 func (b *Backend) InitBare(owner, name, defaultBranch string) error {
 	dir := b.RepoPath(owner, name)
+	return b.InitBareAt(owner, name, defaultBranch, dir)
+}
+
+// InitBareAt initializes a bare repo at an explicit directory (custom storage
+// path support).
+func (b *Backend) InitBareAt(owner, name, defaultBranch, dir string) error {
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return err
 	}
@@ -88,8 +94,38 @@ func (b *Backend) Fork(owner, name, srcDir string) error {
 	return nil
 }
 
+// ImportBare clones a remote repository (by URL) into a bare repo at dir.
+func (b *Backend) ImportBare(cloneURL, dir string) error {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, b.Binary, "clone", "--bare", cloneURL, dir)
+	cmd.Stdin = strings.NewReader("")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git clone: %v: %s", err, out)
+	}
+	return nil
+}
+
 func (b *Backend) Remove(owner, name string) error {
 	return os.RemoveAll(b.RepoPath(owner, name))
+}
+
+// PushMirror pushes all refs (--mirror) from src into dst (both bare dirs).
+func (b *Backend) PushMirror(src, dst string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, b.Binary, "push", "--mirror", dst)
+	cmd.Dir = src
+	cmd.Stdin = strings.NewReader("")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git push --mirror: %v: %s", err, out)
+	}
+	return nil
 }
 
 // --- smart HTTP ---

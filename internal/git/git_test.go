@@ -1,6 +1,9 @@
 package git
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -88,4 +91,43 @@ filename README.md
 	if lines[0].Committed == "" {
 		t.Fatalf("committed_at empty: %+v", lines[0])
 	}
+}
+
+// TestImportBare verifies git clone --bare against a local source repo (the
+// same code path used by /projects/import/ for remote URLs).
+func TestImportBare(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	runGit(t, root, "init", "-q", "-b", "main", src)
+	runGit(t, src, "config", "user.email", "a@b.c")
+	runGit(t, src, "config", "user.name", "a")
+	os.WriteFile(filepath.Join(src, "f.txt"), []byte("hello"), 0o644)
+	runGit(t, src, "add", ".")
+	runGit(t, src, "commit", "-q", "-m", "init")
+
+	dst := filepath.Join(root, "imported.git")
+	b := New("git", root)
+	if err := b.ImportBare(src, dst); err != nil {
+		t.Fatalf("ImportBare: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "HEAD")); err != nil {
+		t.Fatalf("bare repo not created: %v", err)
+	}
+	if out := runGit(t, dst, "log", "--oneline"); !strings.Contains(out, "init") {
+		t.Fatalf("imported repo has no commits: %s", out)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+	return string(out)
 }

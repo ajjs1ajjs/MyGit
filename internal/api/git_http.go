@@ -54,6 +54,9 @@ func (a *App) handleGitInfoRefs(w http.ResponseWriter, r *http.Request) {
 	}
 	parts := strings.Split(repo.Path, "/")
 	dir := a.Git.RepoPath(parts[0], parts[1])
+	if repo.StoragePath != "" {
+		dir = repo.StoragePath
+	}
 	out, err := a.Git.InfoRefs(dir, service)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "git error: "+err.Error())
@@ -87,6 +90,9 @@ func (a *App) handleGitRPC(w http.ResponseWriter, r *http.Request) {
 	}
 	parts := strings.Split(repo.Path, "/")
 	dir := a.Git.RepoPath(parts[0], parts[1])
+	if repo.StoragePath != "" {
+		dir = repo.StoragePath
+	}
 	// Stream the body straight into git's stdin (capped at 256MB) instead of
 	// buffering it in memory — large pushes used to consume the whole payload.
 	out, err := a.Git.RPC(dir, service, io.LimitReader(r.Body, 256<<20))
@@ -127,8 +133,11 @@ func (a *App) handlePostReceive(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(repoPath, "/")
 	if len(parts) >= 2 {
 		dir := a.Git.RepoPath(parts[0], parts[1])
-		size := a.Git.CountSize(dir)
 		if repo, _ := a.Store.GetRepoByPath(repoPath); repo != nil {
+			if repo.StoragePath != "" {
+				dir = repo.StoragePath
+			}
+			size := a.Git.CountSize(dir)
 			_ = a.Store.UpdateRepo(repo.ID, map[string]any{"size_kb": size, "updated_at": storage.Now()})
 		}
 	}

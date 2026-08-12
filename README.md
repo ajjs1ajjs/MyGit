@@ -4,7 +4,7 @@
 
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-blue.svg)](https://go.dev)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-3.0.8-orange.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-3.0.9-orange.svg)](CHANGELOG.md)
 
 ---
 

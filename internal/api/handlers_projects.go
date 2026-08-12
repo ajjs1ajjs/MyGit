@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/base64"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -91,12 +93,7 @@ func (a *App) handleGetProject(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	p := a.principal(r)
-	var body struct {
-		Name          string `json:"name"`
-		Description   string `json:"description"`
-		Visibility    string `json:"visibility"`
-		DefaultBranch string `json:"default_branch"`
-	}
+	var body importRequest
 	if err := jsonDecode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")
 		return
@@ -113,33 +110,52 @@ func (a *App) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	if defBranch == "" {
 		defBranch = "main"
 	}
-	path := p.Username + "/" + body.Name
+	ownerID, _ := anyInt64(body.OwnerID)
+	ownerType, ownerPath, ownerID, group, ok := a.resolveOwner(w, r, p, body.OwnerType, ownerID)
+	if !ok {
+		return
+	}
+	_ = group
+	path := ownerPath + "/" + body.Name
 	if existing, _ := a.Store.GetRepoByPath(path); existing != nil {
 		writeErr(w, http.StatusBadRequest, "Repository already exists")
 		return
 	}
-	// Defense in depth: the owner component comes from the authenticated
-	// username, which registration already validates. Re-check it here so a
-	// legacy/poisoned row can never reach filepath.Join.
-	if !auth.ValidUsername(p.Username) {
+	// Defense in depth: the owner component must be a safe path segment.
+	if !validRepoName(ownerPath) {
 		writeErr(w, http.StatusBadRequest, "Invalid owner")
 		return
 	}
 	repo := &storage.Repository{
-		OwnerType: "user", OwnerID: p.UserID, Name: body.Name, Path: path,
+		OwnerType: ownerType, OwnerID: ownerID, Name: body.Name, Path: path,
 		Description: body.Description, Visibility: vis, DefaultBranch: defBranch,
+	}
+	// custom_disk_path: absolute physical directory, superuser only.
+	targetDir := a.Git.RepoPath(ownerPath, body.Name)
+	if body.CustomDiskPath != "" {
+		if !p.IsSuper {
+			writeErr(w, http.StatusForbidden, "Custom storage paths require admin access")
+			return
+		}
+		targetDir = filepath.Clean(body.CustomDiskPath)
+		if !filepath.IsAbs(targetDir) {
+			writeErr(w, http.StatusBadRequest, "Custom storage path must be absolute")
+			return
+		}
+		repo.StoragePath = targetDir
 	}
 	id, err := a.Store.CreateRepo(repo)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "Database error")
 		return
 	}
-	if err := a.Git.InitBare(p.Username, body.Name, defBranch); err != nil {
+	if err := a.Git.InitBareAt(ownerPath, body.Name, defBranch, targetDir); err != nil {
 		_ = a.Store.DeleteRepo(id)
 		writeErr(w, http.StatusInternalServerError, "git init failed: "+err.Error())
 		return
 	}
 	_ = a.Store.SetAccess(p.UserID, id, 50)
+	a.Store.AddAuditEvent("repo.create", p.UserID, p.Username, "repository", repo.Path, "Repository "+repo.Path+" created")
 	repo.ID = id
 	writeJSON(w, http.StatusCreated, repoToMap(*repo))
 }
@@ -219,6 +235,9 @@ func (a *App) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = a.Git.Remove(owner, name)
+	if repo.StoragePath != "" {
+		_ = os.RemoveAll(repo.StoragePath)
+	}
 	_ = a.Store.DeleteRepo(id)
 	writeJSON(w, http.StatusOK, map[string]any{"detail": "deleted"})
 }
@@ -285,6 +304,9 @@ func (a *App) requireRepoAccess(w http.ResponseWriter, r *http.Request) *storage
 }
 
 func (a *App) repoDir(repo *storage.Repository) string {
+	if repo.StoragePath != "" {
+		return repo.StoragePath
+	}
 	owner, name := repoPathParts(repo.Path)
 	if owner == "" || name == "" {
 		return ""

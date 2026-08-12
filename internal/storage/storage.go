@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS repositories (
   is_fork INTEGER DEFAULT 0,
   forked_from INTEGER,
   size_kb INTEGER DEFAULT 0,
+  storage_path TEXT DEFAULT '',
   created_at TEXT, updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS access (
@@ -195,7 +196,64 @@ CREATE TABLE IF NOT EXISTS wiki_pages (
   slug TEXT NOT NULL,
   title TEXT DEFAULT '',
   content TEXT DEFAULT '',
+  created_at TEXT,
   UNIQUE(repository_id, slug)
+);
+CREATE TABLE IF NOT EXISTS integration_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  provider TEXT NOT NULL,
+  token_encrypted TEXT NOT NULL,
+  created_at TEXT,
+  UNIQUE(user_id, provider)
+);
+CREATE TABLE IF NOT EXISTS audit_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  action TEXT NOT NULL,
+  actor_id INTEGER DEFAULT 0,
+  actor_username TEXT DEFAULT '',
+  target_type TEXT DEFAULT '',
+  target_id TEXT DEFAULT '',
+  message TEXT DEFAULT '',
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS backup_schedules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  frequency TEXT DEFAULT 'daily',
+  time_of_day TEXT DEFAULT '02:15:00',
+  enabled INTEGER DEFAULT 1,
+  encrypt INTEGER DEFAULT 1,
+  upload INTEGER DEFAULT 1,
+  keep_local INTEGER DEFAULT 14,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS backup_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT DEFAULT 'scheduled',
+  status TEXT DEFAULT 'running',
+  archive_path TEXT DEFAULT '',
+  error TEXT DEFAULT '',
+  started_at TEXT,
+  finished_at TEXT
+);
+CREATE TABLE IF NOT EXISTS mirror_targets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  target TEXT NOT NULL,
+  last_status TEXT DEFAULT '',
+  last_error TEXT DEFAULT '',
+  last_synced_at TEXT,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS import_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider TEXT DEFAULT 'custom',
+  target_path TEXT DEFAULT '',
+  status TEXT DEFAULT 'running',
+  error TEXT DEFAULT '',
+  started_at TEXT,
+  finished_at TEXT
 );
 `
 
@@ -232,6 +290,9 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	if err := addColumnIfMissing(db, "wiki_pages", "created_at", "TEXT DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "repositories", "storage_path", "TEXT DEFAULT ''"); err != nil {
 		return err
 	}
 	return nil

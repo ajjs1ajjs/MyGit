@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/ajjs1ajjs/MyGit/internal/auth"
 	"github.com/ajjs1ajjs/MyGit/internal/storage"
@@ -341,8 +342,9 @@ func (a *App) handleListTokens(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	p := a.principal(r)
 	var body struct {
-		Name   string   `json:"name"`
-		Scopes []string `json:"scopes"`
+		Name          string   `json:"name"`
+		Scopes        []string `json:"scopes"`
+		ExpiresInDays int      `json:"expires_in_days"`
 	}
 	if err := jsonDecode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")
@@ -360,7 +362,11 @@ func (a *App) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(body.Scopes)
 		scopes = string(b)
 	}
-	id, err := a.Store.CreateToken(p.UserID, body.Name, hash, scopes)
+	expiresAt := ""
+	if body.ExpiresInDays > 0 {
+		expiresAt = time.Now().UTC().Add(time.Duration(body.ExpiresInDays) * 24 * time.Hour).Format("2006-01-02T15:04:05Z")
+	}
+	id, err := a.Store.CreateTokenWithExpiry(p.UserID, body.Name, hash, scopes, expiresAt)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "Database error")
 		return

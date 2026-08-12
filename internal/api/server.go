@@ -70,22 +70,54 @@ func (a *App) Handler() http.Handler {
 
 	// users
 	r.Route("/api/v1/users", func(r chi.Router) {
+		r.With(a.withAuth).Get("/", a.handleListUsers)
 		r.With(a.withAuth).Get("/me/", a.handleMe)
 		r.With(a.withAuth).Patch("/me/", a.handleUpdateMe)
 		r.With(a.withAuth).Post("/change_password/", a.handleChangePassword)
+		r.With(a.withAuth).Get("/{username}/", a.handleGetUserProfile)
+		r.With(a.withAuth).Patch("/{username}/", a.handlePatchUser)
 		r.With(a.withAuth).Get("/{username}/keys/", a.handleListKeys)
 		r.With(a.withAuth).Post("/{username}/keys/", a.handleAddKey)
 		r.With(a.withAuth).Delete("/{username}/keys/{keyID}/", a.handleDeleteKey)
 		r.With(a.withAuth).Get("/{username}/tokens/", a.handleListTokens)
 		r.With(a.withAuth).Post("/{username}/tokens/", a.handleCreateToken)
 		r.With(a.withAuth).Delete("/{username}/tokens/{tokenID}/", a.handleDeleteToken)
+		r.With(a.withAuth).Get("/{username}/integration-tokens/", a.handleListIntegrationTokens)
+		r.With(a.withAuth).Post("/{username}/integration-tokens/", a.handleSaveIntegrationToken)
+		r.With(a.withAuth).Delete("/{username}/integration-tokens/{provider}/", a.handleDeleteIntegrationToken)
 	})
+
+	// groups
+	r.Route("/api/v1/groups", func(r chi.Router) {
+		r.With(a.withAuth).Get("/", a.handleListGroups)
+		r.With(a.withAuth).Post("/", a.handleCreateGroup)
+		r.With(a.withAuth).Get("/{id}/", a.handleGetGroup)
+		r.With(a.withAuth).Get("/{id}/projects/", a.handleListGroupProjects)
+	})
+
+	// admin (superuser)
+	r.Route("/api/v1/admin", func(r chi.Router) {
+		r.With(a.withAuth, a.withAdmin).Get("/audit-events/", a.handleAuditEvents)
+		r.With(a.withAuth, a.withAdmin).Get("/backup-schedules/", a.handleBackupSchedules)
+		r.With(a.withAuth, a.withAdmin).Post("/backup-schedules/", a.handleCreateBackupSchedule)
+		r.With(a.withAuth, a.withAdmin).Patch("/backup-schedules/{id}/", a.handlePatchBackupSchedule)
+		r.With(a.withAuth, a.withAdmin).Post("/backup-schedules/{id}/run_now/", a.handleRunBackupNow)
+		r.With(a.withAuth, a.withAdmin).Get("/backup-jobs/", a.handleBackupJobs)
+		r.With(a.withAuth, a.withAdmin).Get("/mirror-targets/", a.handleMirrorTargets)
+		r.With(a.withAuth, a.withAdmin).Post("/mirror-targets/{id}/sync/", a.handleSyncMirror)
+	})
+	r.With(a.withAuth, a.withAdmin).Get("/api/v1/repository-import-jobs/", a.handleImportJobs)
 
 	// projects
 	r.Route("/api/v1/projects", func(r chi.Router) {
 		r.With(a.withAuth).Get("/", a.handleListProjects)
 		r.With(a.withAuth).Post("/", a.handleCreateProject)
 		r.Get("/by-path/{owner}/{repo}/", a.handleProjectByPath)
+		// import + disk browser (static segments win over /{id}/ in chi)
+		r.With(a.withAuth).Get("/import/{provider}/repos/", a.handleListProviderRepos)
+		r.With(a.withAuth).Post("/import/", a.handleImportProject)
+		r.With(a.withAuth, a.withAdmin).Get("/browse-disk/", a.handleBrowseDisk)
+		r.With(a.withAuth, a.withAdmin).Post("/create-disk-folder/", a.handleCreateDiskFolder)
 		r.With(a.withAuth).Post("/{id}/fork/", a.handleForkProject)
 		r.With(a.withAuth).Get("/{id}/tree/", a.handleTree)
 		r.With(a.withAuth).Get("/{id}/raw/", a.handleRaw)
@@ -197,7 +229,7 @@ func (a *App) authenticate(r *http.Request) (*principal, error) {
 			}
 			return &principal{UserID: claims.UserID, Username: claims.Username, IsSuper: u.IsSuperuser == 1, Method: "jwt"}, nil
 		}
-		if pat, err := a.Store.GetTokenByHash(auth.HashToken(token)); err == nil && pat != nil {
+		if pat, err := a.Store.GetTokenByHash(auth.HashToken(token)); err == nil && pat != nil && !patExpired(pat.ExpiresAt) {
 			a.Store.TouchToken(pat.ID)
 			u, _ := a.Store.GetUserByID(pat.UserID)
 			if u != nil {
@@ -215,7 +247,7 @@ func (a *App) authenticate(r *http.Request) (*principal, error) {
 			if auth.VerifyPassword(u.PasswordHash, pass) {
 				return &principal{UserID: u.ID, Username: u.Username, IsSuper: u.IsSuperuser == 1, Method: "basic"}, nil
 			}
-			if pat, err := a.Store.GetTokenByHash(auth.HashToken(pass)); err == nil && pat != nil && pat.UserID == u.ID {
+			if pat, err := a.Store.GetTokenByHash(auth.HashToken(pass)); err == nil && pat != nil && pat.UserID == u.ID && !patExpired(pat.ExpiresAt) {
 				a.Store.TouchToken(pat.ID)
 				return &principal{UserID: u.ID, Username: u.Username, IsSuper: u.IsSuperuser == 1, Method: "basic"}, nil
 			}
@@ -233,6 +265,22 @@ func (a *App) authenticate(r *http.Request) (*principal, error) {
 		}
 	}
 	return nil, errors.New("not authenticated")
+}
+
+// patExpired reports whether a PAT's expires_at (RFC3339) has passed.
+func patExpired(expiresAt string) bool {
+	if expiresAt == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, expiresAt)
+	if err != nil {
+		// fallback: try the storage format
+		t, err = time.Parse("2006-01-02T15:04:05Z", expiresAt)
+		if err != nil {
+			return false
+		}
+	}
+	return time.Now().UTC().After(t)
 }
 
 func (a *App) withAuth(next http.Handler) http.Handler {

@@ -136,8 +136,12 @@ type Token struct {
 }
 
 func (st *Store) CreateToken(userID int64, name, hash, scopes string) (int64, error) {
-	res, err := st.DB.Exec(`INSERT INTO tokens (user_id, name, token_hash, scopes, created_at) VALUES (?,?,?,?,?)`,
-		userID, name, hash, scopes, Now())
+	return st.CreateTokenWithExpiry(userID, name, hash, scopes, "")
+}
+
+func (st *Store) CreateTokenWithExpiry(userID int64, name, hash, scopes, expiresAt string) (int64, error) {
+	res, err := st.DB.Exec(`INSERT INTO tokens (user_id, name, token_hash, scopes, expires_at, created_at) VALUES (?,?,?,?,?,?)`,
+		userID, name, hash, scopes, expiresAt, Now())
 	if err != nil {
 		return 0, err
 	}
@@ -248,17 +252,18 @@ type Repository struct {
 	IsFork        int    `json:"is_fork"`
 	ForkedFrom    *int64 `json:"forked_from"`
 	SizeKB        int    `json:"size_kb"`
+	StoragePath   string `json:"-"`
 	CreatedAt     string `json:"created_at"`
 	UpdatedAt     string `json:"updated_at"`
 }
 
-const repoCols = `id, owner_type, owner_id, name, path, description, visibility, default_branch, is_archived, is_fork, forked_from, size_kb, created_at, updated_at`
+const repoCols = `id, owner_type, owner_id, name, path, description, visibility, default_branch, is_archived, is_fork, forked_from, size_kb, storage_path, created_at, updated_at`
 
 func scanRepo(row interface{ Scan(...any) error }) (*Repository, error) {
 	var r Repository
 	var forked sql.NullInt64
 	err := row.Scan(&r.ID, &r.OwnerType, &r.OwnerID, &r.Name, &r.Path, &r.Description,
-		&r.Visibility, &r.DefaultBranch, &r.IsArchived, &r.IsFork, &forked, &r.SizeKB, &r.CreatedAt, &r.UpdatedAt)
+		&r.Visibility, &r.DefaultBranch, &r.IsArchived, &r.IsFork, &forked, &r.SizeKB, &r.StoragePath, &r.CreatedAt, &r.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -271,9 +276,9 @@ func scanRepo(row interface{ Scan(...any) error }) (*Repository, error) {
 
 func (st *Store) CreateRepo(r *Repository) (int64, error) {
 	now := Now()
-	res, err := st.DB.Exec(`INSERT INTO repositories (owner_type, owner_id, name, path, description, visibility, default_branch, is_archived, is_fork, forked_from, size_kb, created_at, updated_at)
-	  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.OwnerType, r.OwnerID, r.Name, r.Path, r.Description,
-		r.Visibility, r.DefaultBranch, r.IsArchived, r.IsFork, r.ForkedFrom, r.SizeKB, now, now)
+	res, err := st.DB.Exec(`INSERT INTO repositories (owner_type, owner_id, name, path, description, visibility, default_branch, is_archived, is_fork, forked_from, size_kb, storage_path, created_at, updated_at)
+	  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, r.OwnerType, r.OwnerID, r.Name, r.Path, r.Description,
+		r.Visibility, r.DefaultBranch, r.IsArchived, r.IsFork, r.ForkedFrom, r.SizeKB, r.StoragePath, now, now)
 	if err != nil {
 		return 0, err
 	}
@@ -344,7 +349,7 @@ func scanRepos(rows *sql.Rows) ([]Repository, error) {
 		var r Repository
 		var forked sql.NullInt64
 		if err := rows.Scan(&r.ID, &r.OwnerType, &r.OwnerID, &r.Name, &r.Path, &r.Description,
-			&r.Visibility, &r.DefaultBranch, &r.IsArchived, &r.IsFork, &forked, &r.SizeKB, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			&r.Visibility, &r.DefaultBranch, &r.IsArchived, &r.IsFork, &forked, &r.SizeKB, &r.StoragePath, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if forked.Valid {
@@ -385,7 +390,8 @@ func (st *Store) DeleteRepo(id int64) error {
 // --- access / roles ---
 
 // EffectiveRole returns the user's effective role for a repo:
-// superuser=50, owner=50, explicit access, else 0 (guest if public read).
+// superuser=50, owner=50, explicit access, group membership for
+// organization-owned repos, else 0 (guest if public read).
 func (st *Store) EffectiveRole(userID, repoID int64, ownerID int64, isSuperuser bool, visibility string) int {
 	if isSuperuser {
 		return 50
@@ -404,8 +410,29 @@ func (st *Store) EffectiveRole(userID, repoID int64, ownerID int64, isSuperuser 
 	if err != nil {
 		role = 0
 	}
+	if role < 10 {
+		if groupRole := st.userGroupRoleForRepo(userID, repoID); groupRole > role {
+			role = groupRole
+		}
+	}
 	if role < 10 && visibility == "public" {
 		return 10
+	}
+	return role
+}
+
+// userGroupRoleForRepo resolves a user's role on an organization-owned repo
+// through their membership in the owning group.
+func (st *Store) userGroupRoleForRepo(userID, repoID int64) int {
+	var ownerType string
+	var ownerID int64
+	err := st.DB.QueryRow(`SELECT owner_type, owner_id FROM repositories WHERE id = ?`, repoID).Scan(&ownerType, &ownerID)
+	if err != nil || ownerType != "organization" {
+		return 0
+	}
+	var role int
+	if err := st.DB.QueryRow(`SELECT role FROM group_members WHERE group_id = ? AND user_id = ?`, ownerID, userID).Scan(&role); err != nil {
+		return 0
 	}
 	return role
 }
@@ -808,6 +835,351 @@ func (st *Store) mapRows(query string, args ...any) ([]map[string]any, error) {
 			}
 		}
 		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// --- groups ---
+
+type Group struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	Description string `json:"description"`
+	ParentID    *int64 `json:"parent_id"`
+	MemberCount int    `json:"member_count"`
+	CreatedAt   string `json:"created_at"`
+}
+
+func (st *Store) CreateGroup(name, path, description string, creatorID int64) (int64, error) {
+	now := Now()
+	res, err := st.DB.Exec(`INSERT INTO groups (name, path, description, created_at) VALUES (?,?,?,?)`,
+		name, path, description, now)
+	if err != nil {
+		return 0, err
+	}
+	id, _ := res.LastInsertId()
+	_, _ = st.DB.Exec(`INSERT INTO group_members (group_id, user_id, role) VALUES (?,?,50)`, id, creatorID)
+	return id, nil
+}
+
+func (st *Store) GetGroup(id int64) (*Group, error) {
+	var g Group
+	err := st.DB.QueryRow(`SELECT id, name, path, COALESCE(description,''), parent_id, created_at FROM groups WHERE id = ?`, id).
+		Scan(&g.ID, &g.Name, &g.Path, &g.Description, &g.ParentID, &g.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &g, err
+}
+
+func (st *Store) ListGroups(userID int64) ([]Group, error) {
+	rows, err := st.DB.Query(`SELECT g.id, g.name, g.path, COALESCE(g.description,''), g.parent_id, g.created_at,
+	  (SELECT COUNT(*) FROM group_members m WHERE m.group_id = g.id) AS member_count
+	  FROM groups g ORDER BY g.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Group
+	for rows.Next() {
+		var g Group
+		if err := rows.Scan(&g.ID, &g.Name, &g.Path, &g.Description, &g.ParentID, &g.CreatedAt, &g.MemberCount); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+func (st *Store) GroupRole(userID, groupID int64) int {
+	var role int
+	if err := st.DB.QueryRow(`SELECT role FROM group_members WHERE group_id = ? AND user_id = ?`, groupID, userID).Scan(&role); err != nil {
+		return 0
+	}
+	return role
+}
+
+func (st *Store) CountGroupMembers(groupID int64) int {
+	var n int
+	_ = st.DB.QueryRow(`SELECT COUNT(*) FROM group_members WHERE group_id = ?`, groupID).Scan(&n)
+	return n
+}
+
+// ListGroupProjects returns the group's repositories the user can see
+// (member of the group, explicit access, or public).
+func (st *Store) ListGroupProjects(groupID, userID int64) ([]Repository, error) {
+	var query string
+	var args []any
+	base := `SELECT ` + strings.ReplaceAll(repoCols, ", ", ", r.") +
+		` FROM repositories r WHERE r.owner_type = 'organization' AND r.owner_id = ?`
+	if userID == 0 {
+		query = base + ` AND r.visibility = 'public' ORDER BY r.id DESC`
+		args = []any{groupID}
+	} else {
+		query = base + ` AND (r.visibility = 'public' OR r.owner_id = ?
+		   OR EXISTS (SELECT 1 FROM access a WHERE a.repository_id = r.id AND a.user_id = ? AND a.role >= 10)
+		   OR EXISTS (SELECT 1 FROM group_members gm WHERE gm.group_id = ? AND gm.user_id = ? AND gm.role >= 10))
+		   ORDER BY r.id DESC`
+		args = []any{groupID, userID, userID, groupID, userID}
+	}
+	rows, err := st.DB.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRepos(rows)
+}
+
+// --- integration tokens ---
+
+type IntegrationToken struct {
+	ID            int64  `json:"id"`
+	UserID        int64  `json:"user_id"`
+	Provider      string `json:"provider"`
+	TokenEncrypted string `json:"-"`
+	CreatedAt     string `json:"created_at"`
+}
+
+func (st *Store) UpsertIntegrationToken(userID int64, provider, encrypted string) error {
+	_, err := st.DB.Exec(`INSERT INTO integration_tokens (user_id, provider, token_encrypted, created_at) VALUES (?,?,?,?)
+	  ON CONFLICT(user_id, provider) DO UPDATE SET token_encrypted = excluded.token_encrypted`,
+		userID, provider, encrypted, Now())
+	return err
+}
+
+func (st *Store) GetIntegrationToken(userID int64, provider string) (*IntegrationToken, error) {
+	var t IntegrationToken
+	err := st.DB.QueryRow(`SELECT id, user_id, provider, token_encrypted, COALESCE(created_at,'') FROM integration_tokens WHERE user_id = ? AND provider = ?`, userID, provider).
+		Scan(&t.ID, &t.UserID, &t.Provider, &t.TokenEncrypted, &t.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &t, err
+}
+
+func (st *Store) ListIntegrationTokens(userID int64) ([]IntegrationToken, error) {
+	rows, err := st.DB.Query(`SELECT id, user_id, provider, token_encrypted, COALESCE(created_at,'') FROM integration_tokens WHERE user_id = ? ORDER BY provider`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []IntegrationToken
+	for rows.Next() {
+		var t IntegrationToken
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Provider, &t.TokenEncrypted, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (st *Store) DeleteIntegrationToken(userID int64, provider string) error {
+	_, err := st.DB.Exec(`DELETE FROM integration_tokens WHERE user_id = ? AND provider = ?`, userID, provider)
+	return err
+}
+
+// --- audit log ---
+
+func (st *Store) AddAuditEvent(action string, actorID int64, actorUsername, targetType, targetID, message string) {
+	_, _ = st.DB.Exec(`INSERT INTO audit_events (action, actor_id, actor_username, target_type, target_id, message, created_at)
+	  VALUES (?,?,?,?,?,?,?)`, action, actorID, actorUsername, targetType, targetID, message, Now())
+}
+
+func (st *Store) ListAuditEvents(action string, limit int) ([]map[string]any, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	var q string
+	var args []any
+	if action != "" {
+		q = `SELECT id, action, actor_id, actor_username, target_type, target_id, message, created_at FROM audit_events WHERE action = ? ORDER BY id DESC LIMIT ?`
+		args = []any{action, limit}
+	} else {
+		q = `SELECT id, action, actor_id, actor_username, target_type, target_id, message, created_at FROM audit_events ORDER BY id DESC LIMIT ?`
+		args = []any{limit}
+	}
+	return st.mapRows(q, args...)
+}
+
+// --- backup schedules / jobs ---
+
+type BackupSchedule struct {
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	Frequency  string `json:"frequency"`
+	TimeOfDay  string `json:"time_of_day"`
+	Enabled    int    `json:"enabled"`
+	Encrypt    int    `json:"encrypt"`
+	Upload     int    `json:"upload"`
+	KeepLocal  int    `json:"keep_local"`
+	CreatedAt  string `json:"created_at"`
+}
+
+func (st *Store) ListBackupSchedules() ([]BackupSchedule, error) {
+	rows, err := st.DB.Query(`SELECT id, name, COALESCE(frequency,'daily'), COALESCE(time_of_day,'02:15:00'), enabled, encrypt, upload, keep_local, COALESCE(created_at,'') FROM backup_schedules ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BackupSchedule
+	for rows.Next() {
+		var s BackupSchedule
+		if err := rows.Scan(&s.ID, &s.Name, &s.Frequency, &s.TimeOfDay, &s.Enabled, &s.Encrypt, &s.Upload, &s.KeepLocal, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+func (st *Store) CreateBackupSchedule(s *BackupSchedule) (int64, error) {
+	res, err := st.DB.Exec(`INSERT INTO backup_schedules (name, frequency, time_of_day, enabled, encrypt, upload, keep_local, created_at) VALUES (?,?,?,?,?,?,?,?)`,
+		s.Name, s.Frequency, s.TimeOfDay, s.Enabled, s.Encrypt, s.Upload, s.KeepLocal, Now())
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (st *Store) GetBackupSchedule(id int64) (*BackupSchedule, error) {
+	var s BackupSchedule
+	err := st.DB.QueryRow(`SELECT id, name, COALESCE(frequency,'daily'), COALESCE(time_of_day,'02:15:00'), enabled, encrypt, upload, keep_local, COALESCE(created_at,'') FROM backup_schedules WHERE id = ?`, id).
+		Scan(&s.ID, &s.Name, &s.Frequency, &s.TimeOfDay, &s.Enabled, &s.Encrypt, &s.Upload, &s.KeepLocal, &s.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &s, err
+}
+
+func (st *Store) UpdateBackupSchedule(id int64, fields map[string]any) error {
+	return genericUpdate(st.DB, "backup_schedules", id, fields)
+}
+
+type BackupJob struct {
+	ID          int64  `json:"id"`
+	Kind        string `json:"kind"`
+	Status      string `json:"status"`
+	ArchivePath string `json:"archive_path"`
+	Error       string `json:"error"`
+	StartedAt   string `json:"started_at"`
+	FinishedAt  string `json:"finished_at"`
+}
+
+func (st *Store) CreateBackupJob(kind string) (int64, error) {
+	res, err := st.DB.Exec(`INSERT INTO backup_jobs (kind, status, started_at) VALUES (?, 'running', ?)`, kind, Now())
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (st *Store) FinishBackupJob(id int64, status, archivePath, errMsg string) {
+	_, _ = st.DB.Exec(`UPDATE backup_jobs SET status = ?, archive_path = ?, error = ?, finished_at = ? WHERE id = ?`,
+		status, archivePath, errMsg, Now(), id)
+}
+
+func (st *Store) ListBackupJobs() ([]BackupJob, error) {
+	rows, err := st.DB.Query(`SELECT id, COALESCE(kind,'scheduled'), COALESCE(status,'running'), COALESCE(archive_path,''), COALESCE(error,''), COALESCE(started_at,''), COALESCE(finished_at,'') FROM backup_jobs ORDER BY id DESC LIMIT 50`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BackupJob
+	for rows.Next() {
+		var j BackupJob
+		if err := rows.Scan(&j.ID, &j.Kind, &j.Status, &j.ArchivePath, &j.Error, &j.StartedAt, &j.FinishedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// --- mirror targets ---
+
+type MirrorTarget struct {
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	Target       string `json:"target"`
+	LastStatus   string `json:"last_status"`
+	LastError    string `json:"last_error"`
+	LastSyncedAt string `json:"last_synced_at"`
+	CreatedAt    string `json:"created_at"`
+}
+
+func (st *Store) ListMirrorTargets() ([]MirrorTarget, error) {
+	rows, err := st.DB.Query(`SELECT id, name, target, COALESCE(last_status,''), COALESCE(last_error,''), COALESCE(last_synced_at,''), COALESCE(created_at,'') FROM mirror_targets ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MirrorTarget
+	for rows.Next() {
+		var m MirrorTarget
+		if err := rows.Scan(&m.ID, &m.Name, &m.Target, &m.LastStatus, &m.LastError, &m.LastSyncedAt, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (st *Store) GetMirrorTarget(id int64) (*MirrorTarget, error) {
+	var m MirrorTarget
+	err := st.DB.QueryRow(`SELECT id, name, target, COALESCE(last_status,''), COALESCE(last_error,''), COALESCE(last_synced_at,''), COALESCE(created_at,'') FROM mirror_targets WHERE id = ?`, id).
+		Scan(&m.ID, &m.Name, &m.Target, &m.LastStatus, &m.LastError, &m.LastSyncedAt, &m.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &m, err
+}
+
+func (st *Store) SetMirrorResult(id int64, status, errMsg string) {
+	_, _ = st.DB.Exec(`UPDATE mirror_targets SET last_status = ?, last_error = ?, last_synced_at = ? WHERE id = ?`,
+		status, errMsg, Now(), id)
+}
+
+// --- import jobs ---
+
+type ImportJob struct {
+	ID         int64  `json:"id"`
+	Provider   string `json:"provider"`
+	TargetPath string `json:"target_path"`
+	Status     string `json:"status"`
+	Error      string `json:"error"`
+	StartedAt  string `json:"started_at"`
+	FinishedAt string `json:"finished_at"`
+}
+
+func (st *Store) CreateImportJob(provider, targetPath string) (int64, error) {
+	res, err := st.DB.Exec(`INSERT INTO import_jobs (provider, target_path, status, started_at) VALUES (?,?, 'running', ?)`,
+		provider, targetPath, Now())
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (st *Store) FinishImportJob(id int64, status, errMsg string) {
+	_, _ = st.DB.Exec(`UPDATE import_jobs SET status = ?, error = ?, finished_at = ? WHERE id = ?`,
+		status, errMsg, Now(), id)
+}
+
+func (st *Store) ListImportJobs() ([]ImportJob, error) {
+	rows, err := st.DB.Query(`SELECT id, COALESCE(provider,'custom'), COALESCE(target_path,''), COALESCE(status,'running'), COALESCE(error,''), COALESCE(started_at,''), COALESCE(finished_at,'') FROM import_jobs ORDER BY id DESC LIMIT 50`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ImportJob
+	for rows.Next() {
+		var j ImportJob
+		if err := rows.Scan(&j.ID, &j.Provider, &j.TargetPath, &j.Status, &j.Error, &j.StartedAt, &j.FinishedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, j)
 	}
 	return out, rows.Err()
 }

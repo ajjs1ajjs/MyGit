@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -736,5 +737,231 @@ func TestMRCommentsAndDiff(t *testing.T) {
 	resp, b = authReq("GET", base+"/api/v1/projects/1/merge_requests/1/diff/", token, nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(b), "b.txt") {
 		t.Fatalf("mr diff = %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestGroupsAndGroupProjects covers groups CRUD, group-owned projects and the
+// group project listing.
+func TestGroupsAndGroupProjects(t *testing.T) {
+	_, base, _ := newTestApp(t)
+	alice := registerAndLogin(t, base)
+
+	resp, b := authReq("POST", base+"/api/v1/groups/", alice, map[string]any{"name": "Team", "path": "team", "description": "Team repos"})
+	if resp.StatusCode != 201 {
+		t.Fatalf("create group = %d: %s", resp.StatusCode, b)
+	}
+	var g map[string]any
+	_ = json.Unmarshal(b, &g)
+	groupID := int64(g["id"].(float64))
+
+	resp, b = authReq("GET", base+"/api/v1/groups/", alice, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "team") || !strings.Contains(string(b), `"member_count":1`) {
+		t.Fatalf("list groups = %d: %s", resp.StatusCode, b)
+	}
+
+	// create a project inside the group
+	resp, b = authReq("POST", base+"/api/v1/projects/", alice, map[string]any{
+		"name": "shared", "visibility": "public",
+		"owner_type": "organization", "owner_id": fmt.Sprintf("%d", groupID),
+	})
+	if resp.StatusCode != 201 {
+		t.Fatalf("create group project = %d: %s", resp.StatusCode, b)
+	}
+	if !strings.Contains(string(b), "team/shared") {
+		t.Fatalf("group project path wrong: %s", b)
+	}
+
+	resp, b = authReq("GET", fmt.Sprintf("%s/api/v1/groups/%d/projects/", base, groupID), alice, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "shared") {
+		t.Fatalf("group projects = %d: %s", resp.StatusCode, b)
+	}
+
+	// a plain member (non-superuser) of the group can see the repo
+	http.Post(base+"/api/v1/auth/register/", "application/json",
+		strings.NewReader(`{"username":"bob","email":"bob@example.com","password":"password123"}`))
+	var bobLogin struct{ Access string `json:"access"` }
+	respLogin, _ := http.Post(base+"/api/v1/auth/login/", "application/json",
+		strings.NewReader(`{"username":"bob","password":"password123"}`))
+	_ = json.NewDecoder(respLogin.Body).Decode(&bobLogin)
+	respLogin.Body.Close()
+	resp, b = authReq("GET", base+"/api/v1/projects/by-path/team/shared/", bobLogin.Access, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("member access group repo = %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestUsersAdminListAndPatch covers the superuser user management endpoints.
+func TestUsersAdminListAndPatch(t *testing.T) {
+	_, base, _ := newTestApp(t)
+	alice := registerAndLogin(t, base)
+	http.Post(base+"/api/v1/auth/register/", "application/json",
+		strings.NewReader(`{"username":"bob","email":"bob@example.com","password":"password123"}`))
+	http.Post(base+"/api/v1/auth/register/", "application/json",
+		strings.NewReader(`{"username":"carol","email":"carol@example.com","password":"password123"}`))
+
+	// non-admin cannot list users
+	var carolLogin struct{ Access string `json:"access"` }
+	respLogin, _ := http.Post(base+"/api/v1/auth/login/", "application/json",
+		strings.NewReader(`{"username":"carol","password":"password123"}`))
+	_ = json.NewDecoder(respLogin.Body).Decode(&carolLogin)
+	respLogin.Body.Close()
+	resp, b := authReq("GET", base+"/api/v1/users/", carolLogin.Access, nil)
+	if resp.StatusCode != 403 {
+		t.Fatalf("carol list users = %d, want 403 (%s)", resp.StatusCode, b)
+	}
+
+	// admin list
+	resp, b = authReq("GET", base+"/api/v1/users/", alice, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "bob") || !strings.Contains(string(b), "carol") {
+		t.Fatalf("list users = %d: %s", resp.StatusCode, b)
+	}
+
+	// profile
+	resp, b = authReq("GET", base+"/api/v1/users/bob/", alice, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(b), `"username":"bob"`) {
+		t.Fatalf("profile = %d: %s", resp.StatusCode, b)
+	}
+
+	// promote bob to admin
+	resp, b = authReq("PATCH", base+"/api/v1/users/bob/", alice, map[string]any{"is_superuser": true})
+	if resp.StatusCode != 200 {
+		t.Fatalf("promote bob = %d: %s", resp.StatusCode, b)
+	}
+	resp, b = authReq("GET", base+"/api/v1/users/", alice, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(b), `"is_superuser":true`) {
+		t.Fatalf("bob not promoted: %s", b)
+	}
+
+	// an admin cannot demote themselves
+	resp, b = authReq("PATCH", base+"/api/v1/users/alice/", alice, map[string]any{"is_superuser": false})
+	if resp.StatusCode != 400 {
+		t.Fatalf("self-demote = %d, want 400 (%s)", resp.StatusCode, b)
+	}
+}
+
+// TestIntegrationTokens covers the self-service GitHub/GitLab token storage.
+func TestIntegrationTokens(t *testing.T) {
+	_, base, _ := newTestApp(t)
+	alice := registerAndLogin(t, base)
+	http.Post(base+"/api/v1/auth/register/", "application/json",
+		strings.NewReader(`{"username":"bob","email":"bob@example.com","password":"password123"}`))
+
+	// save a github token
+	resp, b := authReq("POST", base+"/api/v1/users/alice/integration-tokens/", alice, map[string]any{
+		"provider": "github", "token": "ghp_supersecret123456789",
+	})
+	if resp.StatusCode != 200 {
+		t.Fatalf("save token = %d: %s", resp.StatusCode, b)
+	}
+
+	// list must NOT reveal the raw token
+	resp, b = authReq("GET", base+"/api/v1/users/alice/integration-tokens/", alice, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("list tokens = %d: %s", resp.StatusCode, b)
+	}
+	if strings.Contains(string(b), "ghp_supersecret123456789") {
+		t.Fatalf("raw integration token leaked: %s", b)
+	}
+	if !strings.Contains(string(b), "****") || !strings.Contains(string(b), "github") {
+		t.Fatalf("masked token missing: %s", b)
+	}
+
+	// bob cannot manage alice's tokens
+	var bobLogin struct{ Access string `json:"access"` }
+	respLogin, _ := http.Post(base+"/api/v1/auth/login/", "application/json",
+		strings.NewReader(`{"username":"bob","password":"password123"}`))
+	_ = json.NewDecoder(respLogin.Body).Decode(&bobLogin)
+	respLogin.Body.Close()
+	resp, b = authReq("GET", base+"/api/v1/users/alice/integration-tokens/", bobLogin.Access, nil)
+	if resp.StatusCode != 403 {
+		t.Fatalf("bob read alice tokens = %d, want 403 (%s)", resp.StatusCode, b)
+	}
+
+	// delete
+	resp, b = authReq("DELETE", base+"/api/v1/users/alice/integration-tokens/github/", alice, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("delete token = %d: %s", resp.StatusCode, b)
+	}
+	resp, b = authReq("GET", base+"/api/v1/users/alice/integration-tokens/", alice, nil)
+	if resp.StatusCode != 200 || strings.Contains(string(b), "github") {
+		t.Fatalf("token not deleted: %s", b)
+	}
+}
+
+// TestBrowseDiskRequiresAdmin guards the filesystem browser behind superuser.
+func TestBrowseDiskRequiresAdmin(t *testing.T) {
+	_, base, _ := newTestApp(t)
+	alice := registerAndLogin(t, base)
+	http.Post(base+"/api/v1/auth/register/", "application/json",
+		strings.NewReader(`{"username":"bob","email":"bob@example.com","password":"password123"}`))
+	var bobLogin struct{ Access string `json:"access"` }
+	respLogin, _ := http.Post(base+"/api/v1/auth/login/", "application/json",
+		strings.NewReader(`{"username":"bob","password":"password123"}`))
+	_ = json.NewDecoder(respLogin.Body).Decode(&bobLogin)
+	respLogin.Body.Close()
+
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "sub"), 0o755)
+
+	resp, b := authReq("GET", base+"/api/v1/projects/browse-disk/?path="+url.QueryEscape(dir), bobLogin.Access, nil)
+	if resp.StatusCode != 403 {
+		t.Fatalf("bob browse-disk = %d, want 403 (%s)", resp.StatusCode, b)
+	}
+
+	resp, b = authReq("GET", base+"/api/v1/projects/browse-disk/?path="+url.QueryEscape(dir), alice, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "sub") {
+		t.Fatalf("admin browse-disk = %d: %s", resp.StatusCode, b)
+	}
+}
+
+// TestImportURLSchemeValidation rejects non-http(s) clone URLs.
+func TestImportURLSchemeValidation(t *testing.T) {
+	_, base, _ := newTestApp(t)
+	token := registerAndLogin(t, base)
+	for _, u := range []string{"file:///etc/passwd", "ssh://host/x.git", "ftp://x/y"} {
+		resp, b := authReq("POST", base+"/api/v1/projects/import/", token, map[string]any{
+			"provider": "custom", "clone_url": u, "name": "imp",
+		})
+		if resp.StatusCode != 400 {
+			t.Fatalf("import %s = %d (%s), want 400", u, resp.StatusCode, b)
+		}
+	}
+}
+
+// TestPATExpiryEnforced ensures an expired PAT stops authenticating.
+func TestPATExpiryEnforced(t *testing.T) {
+	app, base, _ := newTestApp(t)
+	alice := registerAndLogin(t, base)
+
+	resp, b := authReq("POST", base+"/api/v1/users/alice/tokens/", alice, map[string]any{
+		"name": "short", "scopes": []string{"read_repo"}, "expires_in_days": 30,
+	})
+	if resp.StatusCode != 201 {
+		t.Fatalf("create token = %d: %s", resp.StatusCode, b)
+	}
+	var created map[string]any
+	_ = json.Unmarshal(b, &created)
+	rawPAT := created["token"].(string)
+	tokenID := int64(created["id"].(float64))
+
+	// expires_at must be set
+	resp, b = authReq("GET", base+"/api/v1/users/alice/tokens/", alice, nil)
+	if resp.StatusCode != 200 || !strings.Contains(string(b), "expires_at") {
+		t.Fatalf("tokens list missing expires_at: %s", b)
+	}
+
+	// working PAT
+	resp, _ = authReq("GET", base+"/api/v1/users/me/", rawPAT, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("fresh PAT should work, got %d", resp.StatusCode)
+	}
+
+	// backdate expiry via the store directly
+	if _, err := app.Store.DB.Exec(`UPDATE tokens SET expires_at = '2020-01-01T00:00:00Z' WHERE id = ?`, tokenID); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	resp, _ = authReq("GET", base+"/api/v1/users/me/", rawPAT, nil)
+	if resp.StatusCode != 401 {
+		t.Fatalf("expired PAT should be rejected, got %d", resp.StatusCode)
 	}
 }

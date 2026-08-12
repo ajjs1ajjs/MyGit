@@ -1,5 +1,28 @@
 # Changelog
 
+## [3.0.9] - 2026-08-12
+
+### 🆕 Нові ендпоінти (frontend parity з Python/Django-версією)
+
+- **Групи**: `GET/POST /groups/`, `GET /groups/{id}/`, `GET /groups/{id}/projects/`. Створення проєктів у групах (`owner_type=organization`) з рольовою моделлю через `group_members`.
+- **Адміністрування користувачів**: `GET /users/`, `GET/PATCH /users/{username}/` (list, profile, is_superuser/is_active/username/email/password). Superuser-only; заборонено зняття адміна з себе.
+- **Integration tokens**: `GET/POST /users/{username}/integration-tokens/`, `DELETE .../{provider}/` — GitHub/GitLab PAT, шифруються AES-256-GCM (ключ від JWT secret), у відповіді лише masked.
+- **Імпорт проєктів**: `GET /projects/import/{provider}/repos/` (список репозиторіїв GitHub/GitLab через token користувача), `POST /projects/import/` (github/gitlab/custom URL), `git clone --bare`.
+- **Disk browser (admin)**: `GET /projects/browse-disk/`, `POST /projects/create-disk-folder/` — вибір/створення фізичного каталогу для репозиторію. Superuser-only.
+- **Admin system**: `GET /admin/audit-events/` (audit log), `GET/POST/PATCH /admin/backup-schedules/`, `POST /admin/backup-schedules/{id}/run_now/` (tar.gz-беккап даних у фоновому goroutine), `GET /admin/backup-jobs/`, `GET /admin/mirror-targets/`, `POST /admin/mirror-targets/{id}/sync/` (git push --mirror у локальне сховище), `GET /repository-import-jobs/`.
+
+### 🛡 Безпека
+
+- **Custom storage path** (`custom_disk_path`) — тільки для superuser, лише абсолютні шляхи.
+- **PAT expiry**: токени приймають `expires_in_days`, `expires_at` зберігається, протерміновані PAT відхиляються при авторизації.
+- **Імпорт за URL** — лише `http(s)` схеми (file://, ssh://, ftp:// заблоковані).
+- **Audit log** — події repo.create/import, group.create, user.update, backup.run, mirror.sync записуються.
+
+### 🐞 Виправлено
+
+- `owner_id` у `/projects/` може приходити рядком (як шле SPA) — гнучке декодування.
+- Git smart HTTP тепер коректно працює з репозиторіями на кастомних шляхах (`storage_path`).
+
 ## [3.0.8] - 2026-08-12
 
 ### 🔴 Виправлено (безпека)
