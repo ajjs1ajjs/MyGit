@@ -119,7 +119,16 @@ func (a *App) Handler() http.Handler {
 	// SPA (Vue history mode): /assets/* and index.html fallback
 	web, _ := fs.Sub(webFS, "web")
 	r.Get("/assets/*", http.StripPrefix("/assets/", http.FileServer(http.FS(web))).ServeHTTP)
-	r.NotFound(a.spaHandler(web))
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		// Never hand out the SPA HTML for unmatched API paths — a client that
+		// calls an unknown /api/ endpoint must get JSON, otherwise the frontend
+		// fails with "Unexpected token '<'" when it tries to parse index.html.
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			writeErr(w, http.StatusNotFound, "Not found")
+			return
+		}
+		a.spaHandler(web).ServeHTTP(w, r)
+	})
 
 	return a.withSecurity(a.withLogging(r))
 }
