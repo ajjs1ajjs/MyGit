@@ -23,10 +23,10 @@ ENV MYGIT_BASE_DIR=/data \
 
 USER mygit
 
-EXPOSE 8080
+EXPOSE 8060
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -qO- http://localhost:8080/api/v1/projects/ >/dev/null 2>&1 || exit 1
+    CMD wget -qO- http://localhost:8060/api/v1/projects/ >/dev/null 2>&1 || exit 1
 
 VOLUME ["/data"]
 
@@ -34,4 +34,4 @@ LABEL maintainer="MyGit"
 LABEL version="3.0.0"
 LABEL description="Self-hosted Git platform (Go)"
 
-CMD ["mygit", "-port", "8080"]
+CMD ["mygit", "-port", "8060"]

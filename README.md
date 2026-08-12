@@ -33,15 +33,15 @@ curl -sSL https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/install.sh | su
 **Windows** (збірка з сирців):
 ```powershell
 go build -o mygit.exe ./cmd/mygit
-.\mygit.exe -port 8080
+.\mygit.exe -port 8060
 ```
 
-Після запуску відкрийте `http://<IP>:8080/` та **зареєструйте перший обліковий запис** — він стане власником (superuser).
+Після запуску відкрийте `http://<IP>:8060/` та **зареєструйте перший обліковий запис** — він стане власником (superuser).
 
 ### Git push/pull
 
 ```bash
-git clone http://<IP>:8080/alice/myrepo.git
+git clone http://<IP>:8060/alice/myrepo.git
 cd myrepo
 git add . && git commit -m "first"
 git push origin main   # попросить логін/пароль або PAT
@@ -52,7 +52,7 @@ git push origin main   # попросить логін/пароль або PAT
 ### Docker
 
 ```bash
-docker compose up -d   # або: docker run -d -p 8080:8080 -v mygit-data:/data mygit
+docker compose up -d   # або: docker run -d -p 8060:8060 -v mygit-data:/data mygit
 ```
 
 ---

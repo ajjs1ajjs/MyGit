@@ -11,9 +11,9 @@ REPOS_DIR="/var/lib/mygit/repos"
 SERVICE_NAME="mygit"
 VERSION="${MYGIT_VERSION:-latest}"
 REPO="ajjs1ajjs/MyGit"
-# Port to bind. If the default 8080 is already taken (e.g. by another service),
+# Port to bind. If the default 8060 is already taken (e.g. by another service),
 # set MYGIT_PORT to a free port.
-PORT="${MYGIT_PORT:-8080}"
+PORT="${MYGIT_PORT:-8060}"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Please run as root (sudo ./install.sh)"

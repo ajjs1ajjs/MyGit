@@ -41,7 +41,7 @@ jobs:
 
       - name: Test Docker image
         run: |
-          docker run -d -p 8080:8080 --name mygit --rm mygit:${{ github.sha }}
+          docker run -d -p 8060:8060 --name mygit --rm mygit:${{ github.sha }}
           sleep 5
-          curl -f http://localhost:8080/ || exit 1
+          curl -f http://localhost:8060/ || exit 1
           docker stop mygit

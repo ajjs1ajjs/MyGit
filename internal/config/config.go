@@ -29,7 +29,7 @@ func Default() *Config {
 		base, _ = os.Getwd()
 	}
 	return &Config{
-		Port:              8080,
+		Port:              8060,
 		Host:              "0.0.0.0",
 		RepoRoot:          envOr("MYGIT_REPOS_ROOT", filepath.Join(base, "repos")),
 		DBPath:            envOr("MYGIT_DB_PATH", filepath.Join(base, "mygit.db")),
