@@ -11,14 +11,34 @@ REPOS_DIR="/var/lib/mygit/repos"
 SERVICE_NAME="mygit"
 VERSION="${MYGIT_VERSION:-latest}"
 REPO="ajjs1ajjs/MyGit"
-# Port to bind. If the default 8060 is already taken (e.g. by another service),
-# set MYGIT_PORT to a free port.
+# Port to bind. If it is already taken, the script picks the next free port
+# automatically (you can pin one with MYGIT_PORT).
 PORT="${MYGIT_PORT:-8060}"
+
+# Find the first free TCP port starting from $1 (up to +30). Uses ss (iproute2);
+# falls back to the requested port if ss is unavailable.
+find_free_port() {
+    local p="$1"
+    if command -v ss >/dev/null 2>&1; then
+        for i in $(seq 0 30); do
+            if ! ss -tln 2>/dev/null | grep -q ":$p "; then
+                echo "$p"
+                return 0
+            fi
+            p=$((p + 1))
+        done
+    fi
+    echo "$1"
+}
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Please run as root (sudo ./install.sh)"
     exit 1
 fi
+
+# Resolve the final port before configuring the service so the health check and
+# the systemd unit agree with each other.
+PORT="$(find_free_port "$PORT")"
 
 IS_UPDATE=0
 if [ -f "/etc/systemd/system/$SERVICE_NAME.service" ] || [ -x "$INSTALL_DIR/mygit" ] || [ -f "$DATA_DIR/mygit.db" ]; then
@@ -70,7 +90,7 @@ fi
 install -m 0755 "$TMP_BIN" "$INSTALL_DIR/mygit"
 rm -f "$TMP_BIN"
 
-echo "[3/4] Configuring system user and service..."
+echo "[3/4] Configuring system user and service (port $PORT)..."
 if ! id mygit >/dev/null 2>&1; then
     useradd -r -s /bin/false -d "$INSTALL_DIR" mygit
 fi
