@@ -18,9 +18,19 @@ import (
 	"github.com/ajjs1ajjs/MyGit/internal/storage"
 )
 
-const Version = "3.0.0"
+const Version = "3.0.2"
 
 func main() {
+	// Handle version flags before flag.Parse, which would otherwise reject
+	// "--version" as an unknown flag and exit non-zero (breaking install.sh's
+	// `mygit --version` sanity check).
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--version", "-version", "-v", "version":
+			fmt.Println(Version)
+			return
+		}
+	}
 	port := flag.Int("port", 0, "listen port")
 	flag.Parse()
 
