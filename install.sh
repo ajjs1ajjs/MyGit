@@ -11,6 +11,9 @@ REPOS_DIR="/var/lib/mygit/repos"
 SERVICE_NAME="mygit"
 VERSION="${MYGIT_VERSION:-latest}"
 REPO="ajjs1ajjs/MyGit"
+# Port to bind. If the default 8080 is already taken (e.g. by another service),
+# set MYGIT_PORT to a free port.
+PORT="${MYGIT_PORT:-8080}"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Please run as root (sudo ./install.sh)"
@@ -82,7 +85,7 @@ After=network.target
 [Service]
 User=mygit
 Group=mygit
-ExecStart=$INSTALL_DIR/mygit -port 8080
+ExecStart=$INSTALL_DIR/mygit -port $PORT
 Restart=always
 RestartSec=5
 Environment=MYGIT_BASE_DIR=$DATA_DIR
@@ -97,10 +100,12 @@ systemctl daemon-reload
 systemctl enable $SERVICE_NAME
 systemctl restart $SERVICE_NAME
 
-echo -n "Waiting for the service to become healthy..."
+# Wait for MYGIT's own health endpoint. Checking / on the port is NOT enough —
+# any other service (e.g. uptime-monitor) would answer and give a false OK.
+echo -n "Waiting for MyGit on port $PORT to become healthy..."
 for i in $(seq 1 15); do
-    if curl -fsS "http://localhost:8080/" >/dev/null 2>&1; then echo " OK"; break; fi
-    if [ "$i" = "15" ]; then echo " FAILED"; else echo -n "."; sleep 1; fi
+    if curl -fsS "http://localhost:$PORT/api/v1/health" >/dev/null 2>&1; then echo " OK"; break; fi
+    if [ "$i" = "15" ]; then echo " FAILED — is port $PORT free? (another service may be using it)"; exit 1; else echo -n "."; sleep 1; fi
 done
 
 echo "[4/4] Done."
@@ -112,7 +117,7 @@ else
     echo "MyGit installed. Version: ${VERSION}"
 fi
 echo ""
-echo "Dashboard: http://localhost:8080/"
+echo "Dashboard: http://localhost:$PORT/"
 echo "Зареєструйте ПЕРШИЙ обліковий запис — він стане власником (superuser)."
 echo ""
 if [ -f "$INSTALL_DIR/mygit.old" ]; then echo "Previous binary kept at: $INSTALL_DIR/mygit.old"; fi

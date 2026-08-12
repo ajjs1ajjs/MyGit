@@ -51,6 +51,10 @@ func (a *App) Handler() http.Handler {
 	r.Post("/{owner}/{repo}/git-upload-pack", a.handleGitRPC)
 	r.Post("/{owner}/{repo}/git-receive-pack", a.handleGitRPC)
 
+	// liveness/health (unauthenticated) — used by installers/uptime checks to
+	// verify THIS service is up, not whatever else happens to be on the port.
+	r.Get("/api/v1/health", a.handleHealth)
+
 	// internal (git hooks / CI runner)
 	r.With(a.withInternal).Post("/api/v1/internal/pre-receive", a.handlePreReceive)
 	r.With(a.withInternal).Post("/api/v1/internal/post-receive", a.handlePostReceive)
@@ -161,6 +165,12 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // writeErr uses the DRF-style "detail" field (a lesson from the other ports).
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]any{"detail": msg})
+}
+
+// handleHealth reports that this MyGit process is up (used by installers and
+// external uptime checks). It is unauthenticated on purpose.
+func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
 // authenticate resolves a principal from: Bearer JWT (access), Bearer PAT,
