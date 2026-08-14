@@ -2,9 +2,27 @@
 
 **Self-hosted Git platform** — альтернатива GitLab/Gitea, переписана на Go.
 
+<img src="docs/banner.svg" width="100%" alt="MyGit">
+
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-blue.svg)](https://go.dev)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/Version-3.0.13-orange.svg)](CHANGELOG.md)
+
+---
+
+## 🖥️ Скріншоти
+
+<p align="center">
+  <img src="docs/screenshots/home.png" width="49%" alt="Проєкти">
+  <img src="docs/screenshots/repo.png" width="49%" alt="Репозиторій">
+  <img src="docs/screenshots/commits.png" width="49%" alt="Коміти">
+  <img src="docs/screenshots/issues.png" width="49%" alt="Issues">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/merge_requests.png" width="49%" alt="Merge Requests">
+  <img src="docs/screenshots/login.png" width="49%" alt="Вхід">
+</p>
 
 ---
 
