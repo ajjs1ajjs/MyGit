@@ -43,15 +43,9 @@
 
 ## 🚀 Швидкий старт
 
-**Linux:**
+**Ubuntu / Debian** (одна команда і встановлює, і оновлює):
 ```bash
 curl -sSL https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/install.sh | sudo bash
-```
-
-**Windows** (збірка з сирців):
-```powershell
-go build -o mygit.exe ./cmd/mygit
-.\mygit.exe -port 8060
 ```
 
 Після запуску відкрийте `http://<IP>:8060/` та **зареєструйте перший обліковий запис** — він стане власником (superuser).

@@ -1,5 +1,5 @@
 # Multi-stage build for production (Go)
-FROM golang:1.25-alpine AS builder
+FROM golang:1.25-ubuntu AS builder
 
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -7,10 +7,12 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/mygit ./cmd/mygit
 
-FROM alpine:3.20
+FROM ubuntu:24.04
 
-RUN apk add --no-cache ca-certificates git openssh \
-    && addgroup -S mygit && adduser -S -G mygit mygit \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates git openssh-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r mygit && useradd -r -g mygit -d /var/lib/mygit -s /usr/sbin/nologin mygit \
     && mkdir -p /data/repos /config \
     && chown -R mygit:mygit /data /config
 
@@ -31,7 +33,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 VOLUME ["/data"]
 
 LABEL maintainer="MyGit"
-LABEL version="3.0.13"
+LABEL version="3.1.0"
 LABEL description="Self-hosted Git platform (Go)"
 
 CMD ["mygit", "-port", "8060"]
