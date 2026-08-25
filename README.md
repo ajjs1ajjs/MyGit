@@ -1,4 +1,8 @@
+<div align="center">
+
 # 🐙 MyGit
+
+### A self-hosted Git platform for teams that own their infrastructure
 
 **Self-hosted Git platform** — альтернатива GitLab/Gitea, переписана на Go.
 
@@ -8,9 +12,11 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/Version-3.0.13-orange.svg)](CHANGELOG.md)
 
+</div>
+
 ---
 
-## 🖥️ Скріншоти
+## 🖼️ Screenshots
 
 <p align="center">
   <img src="docs/screenshots/home.png" width="49%" alt="Проєкти">
