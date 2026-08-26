@@ -1,5 +1,26 @@
 # Changelog
 
+## [3.2.0] - 2026-08-26
+
+### ✨ Додано
+
+- **Підтримка Windows**: релізи тепер містять `mygit-windows-amd64.exe` та
+  `mygit-windows-arm64.exe` (плюс збірки macOS amd64/arm64), усі — зі статичною
+  компіляцією (CGO_ENABLED=0) і покриті `checksums.txt`.
+- **Однорядковий Windows-інсталятор/оновлювач** (`install.ps1`, PowerShell 5.1+):
+  перевіряє наявність Git for Windows, завантажує бінарник, верифікує SHA-256
+  (fail-closed), встановлює в `%ProgramFiles%\mygit` з даними в
+  `%ProgramData\mygit`, реєструє auto-restart Windows-сервіс, обмежує ACL до
+  SYSTEM/Administrators і автоматично підбирає вільний порт від 8060.
+  Оновлення зберігає конфігурацію, БД, репозиторії та користувачів.
+- **CI на windows-latest**: vet, тести та збірка тепер виконуються і на Windows.
+- GitHub Actions закріплені на повні commit SHA (supply-chain безпека).
+
+### 📝 Примітки
+
+- На Windows git-over-HTTP(S) працює повністю; SSH-git
+  (`AuthorizedKeysCommand`) доступний лише на Linux.
+
 ## [3.0.13] - 2026-08-12
 
 ### 🐞 Виправлено
