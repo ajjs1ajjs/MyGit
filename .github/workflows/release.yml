@@ -34,10 +34,10 @@ jobs:
           cd dist
           sha256sum * > checksums.txt
 
-      - name: Create Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          repository: ajjs1ajjs/MyGit
-          token: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
-          files: dist/*
-          generate_release_notes: true
+      - name: Create public release
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+          PUBLIC_REPO: ajjs1ajjs/MyGit
+        run: |
+          test -n "$GH_TOKEN"
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$PUBLIC_REPO" --title "MyGit $GITHUB_REF_NAME" --generate-notes
