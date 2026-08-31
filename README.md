@@ -1,4 +1,15 @@
-<div align="center">
+﻿<div align="center">
+
+# MyGit — Source Code
+
+[![Deployed to](https://img.shields.io/badge/Deployed_to-MyGit-blue)](https://github.com/ajjs1ajjs/MyGit)
+[![Website](https://img.shields.io/badge/Website-ajjs1ajjs.github.io%2FMyGit-green)](https://ajjs1ajjs.github.io/MyGit/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/ajjs1ajjs/MyGit-source/ci.yml?label=CI)](https://github.com/ajjs1ajjs/MyGit-source/actions)
+
+> **Це репозиторій з вихідним кодом MyGit self-hosted Git platform.**
+> Готовий продукт деплоїться в: **https://github.com/ajjs1ajjs/MyGit**
+> Офіційний сайт: **https://ajjs1ajjs.github.io/MyGit/**
 
 # 🐙 MyGit
 
@@ -9,11 +20,10 @@
 <img src="docs/banner.svg" width="100%" alt="MyGit">
 
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-blue.svg)](https://go.dev)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/Version-3.2.0-orange.svg)](CHANGELOG.md)
 
 </div>
-
 ---
 
 ## 🖼️ Screenshots
