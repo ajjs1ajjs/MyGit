@@ -1,5 +1,15 @@
 # Changelog
 
+## [3.2.1] - 2026-08-31
+
+### ✨ Додано
+
+- **PWA**: SPA-фронтенд тепер є повноцінним Progressive Web App (service worker + manifest, офлайн-режим, встановлення на пристрій).
+
+### Змінено
+
+- **Лише Ubuntu / Debian**: видалено `install.ps1` (Windows-інсталятор), Windows/macOS-білди з `release.yml`, Windows-тести з `ci.yml` та Docker-розгортання. Тепер встановлення/розгортання підтримується лише на Ubuntu / Debian через `install.sh`.
+
 ## [3.2.0] - 2026-08-26
 
 ### ✨ Додано

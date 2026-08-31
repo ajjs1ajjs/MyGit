@@ -21,7 +21,9 @@
 
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-blue.svg)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-3.2.0-orange.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-3.2.1-orange.svg)](CHANGELOG.md)
+[![Platform](https://img.shields.io/badge/Platform-Linux-blue.svg)]()
+[![PWA](https://img.shields.io/badge/PWA-offline-cyan)]()
 
 </div>
 ---
@@ -54,7 +56,7 @@
 - **Права**: superuser / рольові (owner 50, maintainer 40, developer 30, reporter 20, guest 10)
 - **SPA-фронтенд**: Vue 3 + Tailwind (embedded через `go:embed`)
 - **SSH git**: AuthorizedKeysCommand + internal API
-- **Кросплатформеність**: Linux (amd64/arm64), Windows (amd64/arm64), macOS — статичні бінарники
+- **Платформа**: Linux (amd64/arm64) — статичні бінарники
 
 ---
 
@@ -65,17 +67,7 @@
 curl -sSL https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/install.sh | sudo bash
 ```
 
-**Windows 10/11 & Server 2016+** (PowerShell від імені адміністратора, також встановлює й оновлює):
-```powershell
-irm https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/install.ps1 | iex
-```
-Або з параметрами:
-```powershell
-.\install.ps1 [-Version v3.0.13] [-Port 8060] [-SkipChecksum]
-```
-> Потрібен **Git for Windows** у PATH (`winget install Git.Git`). Скрипт перевіряє це перед встановленням.
->
-> **Обмеження Windows:** git-over-HTTP(S) працює повністю; **SSH-git** (`AuthorizedKeysCommand`) доступний лише на Linux.
+> **Обмеження:** git-over-HTTP(S) працює повністю; **SSH-git** (`AuthorizedKeysCommand`) доступний лише на Linux.
 
 Після запуску відкрийте `http://<IP>:8060/` та **зареєструйте перший обліковий запис** — він стане власником (superuser).
 
@@ -89,12 +81,6 @@ git push origin main   # попросить логін/пароль або PAT
 ```
 
 Для PAT: Профіль → Tokens → створити; використовуйте як пароль.
-
-### Docker
-
-```bash
-docker compose up -d   # або: docker run -d -p 8060:8060 -v mygit-data:/data mygit
-```
 
 ---
 
@@ -126,6 +112,10 @@ docker compose up -d   # або: docker run -d -p 8060:8060 -v mygit-data:/data 
 > **Авторизація:** SPA використовує **HttpOnly cookies** (`SameSite=Strict`), токени не зберігаються
 > у `localStorage`. Програмні клієнти (hooks/CI/CLI) можуть і надалі передавати JWT/PAT через
 > `Authorization: Bearer` або Basic auth.
+
+## 📱 PWA
+
+SPA-фронтенд MyGit — це **Progressive Web App** (`vite-plugin-pwa`): встановлюється на телефон/ПК як окремий застосунок і кешує assets через Service Worker. Для цього відкрийте `http://<IP>:8060/` у браузері та оберіть "Встановити додаток".
 
 ---
 
