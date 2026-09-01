@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.3.0] - 2026-09-01
+
+### ✨ Додано
+
+- **Windows-підтримка відновлена**: `install.ps1` (PowerShell 5.1+) повернуто — той самий однорядковий інсталятор/оновлювач, що і в 3.2.0, актуалізований під поточну конфігурацію (`MYGIT_BASE_DIR`/`MYGIT_REPOS_ROOT`/`MYGIT_DB_PATH`, `/api/v1/health`). Реєструє Windows Service з auto-restart, обмежує ACL на каталог даних до SYSTEM/Administrators, підбирає вільний порт від 8060, перевіряє SHA-256 (fail-closed).
+- `release.yml` знову білдить `mygit-windows-amd64.exe` та `mygit-windows-arm64.exe` (CGO_ENABLED=0) і додає їх у `checksums.txt` разом з Linux-бінарниками того самого релізу.
+- README: розділ встановлення для Windows поруч з Ubuntu/Debian.
+
+### 🐞 Виправлено
+
+- CI-бейдж у README вказував на стару назву репозиторію `ajjs1ajjs/MyGit-source` (репозиторій було перейменовано на `MyGit`; GitHub мовчки редіректить API-запити, тому бейдж не був "мертвим", але посилався на застарілий шлях) — виправлено на `ajjs1ajjs/MyGit/actions/workflows/ci.yml`.
+- Розсинхрон версії: `cmd/mygit/main.go` показував `3.2.1`, тоді як останній опублікований тег був `v3.2.2` — версію в коді піднято до `3.3.0` (мінор, вище за будь-який попередній тег).
+
+### 📝 Примітки
+
+- **SSH-git на Windows не підтримується "з коробки"**: `AuthorizedKeysCommand` (ендпоінт `/api/v1/internal/authorized_keys`) розраховано на системний OpenSSH-сервер. На Linux (`openssh-server`) це типова конфігурація; Win32-OpenSSH теоретично підтримує `AuthorizedKeysCommand`, але `install.ps1` не налаштовує `sshd_config` автоматично. На Windows використовуйте git-over-HTTP(S) (повністю підтримується).
+- Тестове покриття лишається скромним (2 файли `*_test.go` на весь функціонал issues/MR/webhooks/SSH-ключів) — рекомендується розширити в наступних релізах.
+
 ## [3.2.1] - 2026-08-31
 
 ### ✨ Додано

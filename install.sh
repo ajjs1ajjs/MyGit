@@ -79,24 +79,41 @@ else
     echo "ERROR: curl or wget required"; rm -f "$TMP_BIN"; exit 1
 fi
 
-# Best-effort integrity check: verify the binary against the published
-# checksums.txt when it is available. This protects the update path from a
-# tampered or truncated artifact.
+# Integrity check (fail-closed): verify the binary against the published
+# checksums.txt. This protects the update path from a tampered or truncated
+# artifact. Set MYGIT_SKIP_CHECKSUM=1 to explicitly bypass (not recommended).
 CHECKSUM_URL="${DOWNLOAD_URL%/*}/checksums.txt"
-if command -v sha256sum >/dev/null 2>&1; then
+if [ "${MYGIT_SKIP_CHECKSUM:-0}" = "1" ]; then
+    echo "WARNING: checksum verification explicitly skipped. Installing unverified binary."
+elif ! command -v sha256sum >/dev/null 2>&1; then
+    echo "ERROR: sha256sum not found; cannot verify binary integrity."
+    echo "Install coreutils, or set MYGIT_SKIP_CHECKSUM=1 to explicitly bypass verification."
+    rm -f "$TMP_BIN"; exit 1
+else
     TMP_SUM="$(mktemp)"
+    DOWNLOADED_SUM=0
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$CHECKSUM_URL" -o "$TMP_SUM" 2>/dev/null || true
+        curl -fsSL "$CHECKSUM_URL" -o "$TMP_SUM" 2>/dev/null && DOWNLOADED_SUM=1
     elif command -v wget >/dev/null 2>&1; then
-        wget -q -O "$TMP_SUM" "$CHECKSUM_URL" 2>/dev/null || true
+        wget -q -O "$TMP_SUM" "$CHECKSUM_URL" 2>/dev/null && DOWNLOADED_SUM=1
     fi
-    if [ -s "$TMP_SUM" ]; then
-        EXPECTED="$(grep " ${BINARY_NAME}\$" "$TMP_SUM" | awk '{print $1}')"
-        ACTUAL="$(sha256sum "$TMP_BIN" | awk '{print $1}')"
-        if [ -n "$EXPECTED" ] && [ "$EXPECTED" != "$ACTUAL" ]; then
-            echo "ERROR: checksum mismatch for ${BINARY_NAME}"; rm -f "$TMP_BIN" "$TMP_SUM"; exit 1
-        fi
+    if [ "$DOWNLOADED_SUM" != "1" ] || [ ! -s "$TMP_SUM" ]; then
+        echo "ERROR: could not download checksums.txt from $CHECKSUM_URL."
+        echo "Refusing to install an unverified binary. Re-run once GitHub is reachable,"
+        echo "or set MYGIT_SKIP_CHECKSUM=1 to explicitly bypass verification."
+        rm -f "$TMP_BIN" "$TMP_SUM"; exit 1
     fi
+    EXPECTED="$(grep " ${BINARY_NAME}\$" "$TMP_SUM" | awk '{print $1}')"
+    if [ -z "$EXPECTED" ]; then
+        echo "ERROR: checksums.txt has no entry for ${BINARY_NAME}; refusing to install."
+        rm -f "$TMP_BIN" "$TMP_SUM"; exit 1
+    fi
+    ACTUAL="$(sha256sum "$TMP_BIN" | awk '{print $1}')"
+    if [ "$EXPECTED" != "$ACTUAL" ]; then
+        echo "ERROR: checksum mismatch for ${BINARY_NAME}. Expected $EXPECTED, got $ACTUAL."
+        rm -f "$TMP_BIN" "$TMP_SUM"; exit 1
+    fi
+    echo "Checksum OK."
     rm -f "$TMP_SUM"
 fi
 

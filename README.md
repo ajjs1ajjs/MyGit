@@ -5,7 +5,7 @@
 [![Deployed to](https://img.shields.io/badge/Deployed_to-MyGit-blue)](https://github.com/ajjs1ajjs/MyGit)
 [![Website](https://img.shields.io/badge/Website-ajjs1ajjs.github.io%2FMyGit-green)](https://ajjs1ajjs.github.io/MyGit/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/ajjs1ajjs/MyGit-source/ci.yml?label=CI)](https://github.com/ajjs1ajjs/MyGit-source/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/ajjs1ajjs/MyGit/ci.yml?label=CI)](https://github.com/ajjs1ajjs/MyGit/actions/workflows/ci.yml)
 
 > **Це репозиторій з вихідним кодом MyGit self-hosted Git platform.**
 > Готовий продукт деплоїться в: **https://github.com/ajjs1ajjs/MyGit**
@@ -21,8 +21,8 @@
 
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-blue.svg)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-3.2.1-orange.svg)](CHANGELOG.md)
-[![Platform](https://img.shields.io/badge/Platform-Linux-blue.svg)]()
+[![Version](https://img.shields.io/badge/Version-3.3.0-orange.svg)](CHANGELOG.md)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-blue.svg)]()
 [![PWA](https://img.shields.io/badge/PWA-offline-cyan)]()
 
 </div>
@@ -55,8 +55,8 @@
 - **Користувачі**: реєстрація, JWT, SSH-ключі, Personal Access Tokens
 - **Права**: superuser / рольові (owner 50, maintainer 40, developer 30, reporter 20, guest 10)
 - **SPA-фронтенд**: Vue 3 + Tailwind (embedded через `go:embed`)
-- **SSH git**: AuthorizedKeysCommand + internal API
-- **Платформа**: Linux (amd64/arm64) — статичні бінарники
+- **SSH git**: AuthorizedKeysCommand + internal API (Linux, через системний OpenSSH)
+- **Платформа**: Linux (amd64/arm64) та Windows (amd64/arm64) — статичні бінарники
 
 ---
 
@@ -67,7 +67,13 @@
 curl -sSL https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/install.sh | sudo bash
 ```
 
-> **Обмеження:** git-over-HTTP(S) працює повністю; **SSH-git** (`AuthorizedKeysCommand`) доступний лише на Linux.
+**Windows 10/11 / Server 2016+** (PowerShell, від імені Administrator; та ж команда встановлює і оновлює):
+```powershell
+irm https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/install.ps1 | iex
+```
+Потрібен встановлений Git for Windows (`winget install Git.Git`) — MyGit викликає системний `git` для smart HTTP. Інсталятор реєструє MyGit як Windows Service (`mygit`, автозапуск, авто-перезапуск при збої), дані зберігаються в `%ProgramData%\mygit`, бінарник — у `%ProgramFiles%\mygit`.
+
+> **Обмеження:** git-over-HTTP(S) працює повністю на обох платформах. **SSH-git** (`AuthorizedKeysCommand`) залежить від системного OpenSSH-сервера з підтримкою `AuthorizedKeysCommand`, який на Linux (Ubuntu/Debian, `openssh-server`) налаштовується типово. На Windows Win32-OpenSSH теоретично підтримує `AuthorizedKeysCommand`, але це не входить у стандартний `install.ps1` і потребує додаткового ручного налаштування `sshd_config` — тому SSH-git на Windows наразі **не підтримується "з коробки"**; використовуйте git-over-HTTP(S).
 
 Після запуску відкрийте `http://<IP>:8060/` та **зареєструйте перший обліковий запис** — він стане власником (superuser).
 
