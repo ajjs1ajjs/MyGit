@@ -160,15 +160,21 @@ func (a *App) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "Invalid refresh token")
 		return
 	}
-	// Reject stale refresh tokens and re-issue with the user's current
-	// token_version (password changes bump the version, revoking old tokens).
-	u, _ := a.Store.GetUserByID(claims.UserID)
-	if u == nil || u.IsActive != 1 {
+	// Fetch user from DB first to check current state.
+	u, err := a.Store.GetUserByID(claims.UserID)
+	if err != nil || u == nil {
 		writeErr(w, http.StatusUnauthorized, "Invalid refresh token")
 		return
 	}
+	// Re-check token version AFTER fetching user: this ensures that a password
+	// change (which bumps token_version) immediately invalidates the refresh token,
+	// even if there was a tiny race window between parsing and DB fetch.
 	if claims.Ver != int64(u.TokenVersion) {
 		writeErr(w, http.StatusUnauthorized, "Refresh token has been revoked")
+		return
+	}
+	if u.IsActive != 1 {
+		writeErr(w, http.StatusUnauthorized, "Invalid refresh token")
 		return
 	}
 	access, refresh, _ := a.Auth.TokenPair(claims.UserID, claims.Username, int64(u.TokenVersion))

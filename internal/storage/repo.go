@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 )
 
@@ -504,12 +505,61 @@ func (st *Store) SetAccess(userID, repoID int64, role int) error {
 	return err
 }
 
-// --- generic update helper (whitelisted columns handled by callers) ---
+// --- generic update helper (whitelisted columns handled) ---
+
+var allowedUpdateColumns = map[string]map[string]bool{
+	"users": {
+		"username":             true,
+		"email":                true,
+		"full_name":            true,
+		"bio":                  true,
+		"is_active":            true,
+		"is_superuser":         true,
+		"must_change_password": true,
+		"token_version":        true,
+		"password_hash":        true,
+	},
+	"repositories": {
+		"visibility":      true,
+		"default_branch":  true,
+		"is_archived":     true,
+		"is_fork":         true,
+		"description":     true,
+	},
+	"issues": {
+		"state":       true,
+		"assignee_id": true,
+		"milestone_id": true,
+		"description": true,
+	},
+	"merge_requests": {
+		"state":       true,
+		"assignee_id": true,
+		"target_branch": true,
+		"source_branch": true,
+	},
+}
 
 func genericUpdate(db *sql.DB, table string, id int64, fields map[string]any) error {
 	if len(fields) == 0 {
 		return nil
 	}
+	// Validate column names against whitelist if table has defined allowed columns.
+	if allowedCols, ok := allowedUpdateColumns[table]; ok {
+		var sets []string
+		var args []any
+		for k, v := range fields {
+			if !allowedCols[k] {
+				return fmt.Errorf("column %s is not allowed for table %s", k, table)
+			}
+			sets = append(sets, k+" = ?")
+			args = append(args, v)
+		}
+		args = append(args, id)
+		_, err := db.Exec(`UPDATE `+table+` SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...)
+		return err
+	}
+	// No whitelist defined for this table; proceed with all columns.
 	var sets []string
 	var args []any
 	for k, v := range fields {

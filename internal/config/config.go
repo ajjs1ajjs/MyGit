@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/mattn/go-isatty"
 )
 
 type Config struct {
@@ -41,12 +39,33 @@ func Default() *Config {
 	if base == "" {
 		base, _ = os.Getwd()
 	}
+	jwtSecret := os.Getenv("MYGIT_JWT_SECRET")
+	if jwtSecret == "" {
+		return &Config{
+			Port:              8060,
+			Host:              "0.0.0.0",
+			RepoRoot:          envOr("MYGIT_REPOS_ROOT", filepath.Join(base, "repos")),
+			DBPath:            envOr("MYGIT_DB_PATH", filepath.Join(base, "mygit.db")),
+			JWTSecret:         "",
+			JWTExpireMin:      15,
+			RefreshExpireDays: 30,
+			InternalToken:     os.Getenv("MYGIT_INTERNAL_API_TOKEN"),
+			GitBinary:         envOr("MYGIT_GIT_BINARY", "git"),
+			TLSCert:           os.Getenv("MYGIT_TLS_CERT"),
+			TLSKey:            os.Getenv("MYGIT_TLS_KEY"),
+			BaseDir:           base,
+			BackupKey:         os.Getenv("MYGIT_BACKUP_KEY"),
+			BackupUploadURL:   os.Getenv("MYGIT_BACKUP_UPLOAD_URL"),
+			TrustProxy:        os.Getenv("MYGIT_TRUST_PROXY") == "1" || os.Getenv("MYGIT_TRUST_PROXY") == "true",
+			CustomReposRoot:   envOr("MYGIT_CUSTOM_REPOS_ROOT", base),
+		}
+	}
 	return &Config{
 		Port:              8060,
 		Host:              "0.0.0.0",
 		RepoRoot:          envOr("MYGIT_REPOS_ROOT", filepath.Join(base, "repos")),
 		DBPath:            envOr("MYGIT_DB_PATH", filepath.Join(base, "mygit.db")),
-		JWTSecret:         os.Getenv("MYGIT_JWT_SECRET"),
+		JWTSecret:         jwtSecret,
 		JWTExpireMin:      15,
 		RefreshExpireDays: 30,
 		InternalToken:     os.Getenv("MYGIT_INTERNAL_API_TOKEN"),
@@ -68,49 +87,20 @@ func envOr(key, def string) string {
 	return def
 }
 
-// EnsureJWTSecret returns the configured secret or generates one, persisting it
-// next to the DB (not CWD) so it survives systemd.
-func (c *Config) EnsureJWTSecret() (string, error) {
-	if c.JWTSecret != "" {
-		return c.JWTSecret, nil
-	}
-	secretFile := filepath.Join(filepath.Dir(c.DBPath), ".mygit_jwt_secret")
-	b, err := os.ReadFile(secretFile)
-	if err == nil && len(b) >= 32 {
-		c.JWTSecret = string(b)
-		return c.JWTSecret, nil
-	}
-	secret, err := randomToken(32)
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(filepath.Dir(c.DBPath), 0o700); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(secretFile, []byte(secret), 0o600); err != nil {
-		return "", fmt.Errorf("write jwt secret: %w", err)
-	}
-	c.JWTSecret = secret
-	return c.JWTSecret, nil
-}
+// EnsureJWTSecret is no longer auto-generated. The JWT secret MUST be set
+// via the MYGIT_JWT_SECRET environment variable in production. Omitting it
+// will cause the server to fail to start, forcing explicit configuration.
 
-// EnsureInternalToken returns the internal machine token (for git hooks/CI).
-// The auto-generated token is only echoed to stderr on an interactive terminal;
-// service/logged deployments must set MYGIT_INTERNAL_API_TOKEN explicitly to
-// avoid leaking the secret into logs.
+// EnsureInternalToken returns the internal machine token (for git hooks / CI).
+// The token MUST be set explicitly via the MYGIT_INTERNAL_API_TOKEN environment
+// variable. Omitting it will cause the server to fail to start, forcing explicit
+// configuration. The old behaviour of auto-generating and printing to stderr
+// has been removed to prevent secret leakage in production logs.
 func (c *Config) EnsureInternalToken() (string, error) {
 	if c.InternalToken != "" {
 		return c.InternalToken, nil
 	}
-	token, err := randomToken(32)
-	if err != nil {
-		return "", err
-	}
-	c.InternalToken = token
-	if isatty.IsTerminal(os.Stderr.Fd()) {
-		fmt.Fprintf(os.Stderr, "MYGIT_INTERNAL_API_TOKEN=%s\n", token)
-	}
-	return c.InternalToken, nil
+	return "", fmt.Errorf("MYGIT_INTERNAL_API_TOKEN must be set explicitly via environment variable")
 }
 
 func (c *Config) RepoPath(owner, name string) string {

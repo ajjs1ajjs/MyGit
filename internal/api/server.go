@@ -345,7 +345,7 @@ func (a *App) isHTTPS(r *http.Request) bool {
 	if r.TLS != nil {
 		return true
 	}
-	return a.Cfg.TrustProxy && r.Header.Get("X-Forwarded-Proto") == "https"
+	return false
 }
 
 func (a *App) withSecurity(next http.Handler) http.Handler {
@@ -354,9 +354,9 @@ func (a *App) withSecurity(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		// HSTS applies when TLS is terminated by this process, or — behind
-		// a trusted reverse proxy (MYGIT_TRUST_PROXY=1) — when the proxy
-		// marks the request as https via X-Forwarded-Proto.
+		// HSTS applies only when TLS is terminated by this process (r.TLS != nil).
+		// Do NOT enable HSTS or set the Secure cookie flag when running behind a
+		// reverse proxy without proper TLS termination configuration.
 		if a.isHTTPS(r) {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}

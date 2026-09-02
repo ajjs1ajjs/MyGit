@@ -41,12 +41,6 @@ func main() {
 	if err := os.MkdirAll(cfg.RepoRoot, 0o755); err != nil {
 		log.Fatalf("repo root: %v", err)
 	}
-	if _, err := cfg.EnsureJWTSecret(); err != nil {
-		log.Fatalf("jwt secret: %v", err)
-	}
-	if _, err := cfg.EnsureInternalToken(); err != nil {
-		log.Fatalf("internal token: %v", err)
-	}
 
 	db, abs, err := storage.Open(cfg.DBPath)
 	if err != nil {
