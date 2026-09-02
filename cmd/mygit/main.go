@@ -18,7 +18,7 @@ import (
 	"github.com/ajjs1ajjs/MyGit/internal/storage"
 )
 
-const Version = "3.3.0"
+const Version = "3.4.0"
 
 func main() {
 	// Handle version flags before flag.Parse, which would otherwise reject
@@ -67,7 +67,15 @@ func main() {
 	} else {
 		addr = fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	}
-	srv := &http.Server{Addr: addr, Handler: app.Handler()}
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: app.Handler(),
+		// Slowloris protection. ReadTimeout/WriteTimeout are deliberately
+		// unset: git smart HTTP streams arbitrarily large request/response
+		// bodies and must not be cut off mid-transfer.
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 
 	go func() {
 		sig := make(chan os.Signal, 1)

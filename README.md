@@ -1,15 +1,4 @@
-﻿<div align="center">
-
-# MyGit — Source Code
-
-[![Deployed to](https://img.shields.io/badge/Deployed_to-MyGit-blue)](https://github.com/ajjs1ajjs/MyGit)
-[![Website](https://img.shields.io/badge/Website-ajjs1ajjs.github.io%2FMyGit-green)](https://ajjs1ajjs.github.io/MyGit/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/ajjs1ajjs/MyGit/ci.yml?label=CI)](https://github.com/ajjs1ajjs/MyGit/actions/workflows/ci.yml)
-
-> **Це репозиторій з вихідним кодом MyGit self-hosted Git platform.**
-> Готовий продукт деплоїться в: **https://github.com/ajjs1ajjs/MyGit**
-> Офіційний сайт: **https://ajjs1ajjs.github.io/MyGit/**
+<div align="center">
 
 # 🐙 MyGit
 
@@ -19,13 +8,15 @@
 
 <img src="docs/banner.svg" width="100%" alt="MyGit">
 
-[![Go 1.25](https://img.shields.io/badge/Go-1.25-blue.svg)](https://go.dev)
+[![CI](https://img.shields.io/github/actions/workflow/status/ajjs1ajjs/MyGit/ci.yml?label=CI)](https://github.com/ajjs1ajjs/MyGit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-3.3.0-orange.svg)](CHANGELOG.md)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-blue.svg)]()
-[![PWA](https://img.shields.io/badge/PWA-offline-cyan)]()
+[![Version](https://img.shields.io/badge/Version-3.4.0-orange.svg)](CHANGELOG.md)
+[![Go 1.25](https://img.shields.io/badge/Go-1.25-blue.svg)](https://go.dev)
+![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-blue.svg)
+![PWA](https://img.shields.io/badge/PWA-offline-cyan)
 
 </div>
+
 ---
 
 ## 🖼️ Screenshots
@@ -104,7 +95,8 @@ git push origin main   # попросить логін/пароль або PAT
 | `MYGIT_TLS_KEY` | Шлях до TLS-ключа | порожньо |
 | `MYGIT_BACKUP_KEY` | Ключ шифрування архівів беккапів (AES-256-GCM) | похідний від JWT secret |
 | `MYGIT_BACKUP_UPLOAD_URL` | Базова URL для upload архівів (HTTP PUT / S3-style) | порожньо |
-| `MYGIT_TRUST_PROXY` | Довіряти `X-Forwarded-For` для rate limiting (`1`/`true`) | `0` |
+| `MYGIT_TRUST_PROXY` | Довіряти `X-Forwarded-For` (rate limiting) та `X-Forwarded-Proto` (Secure cookie, HSTS) за довіреним reverse-proxy (`1`/`true`) | `0` |
+| `MYGIT_CUSTOM_REPOS_ROOT` | Корінь для кастомних шляхів репозиторіїв (`custom_disk_path`, superuser-only) | `{base}` |
 
 > **HTTPS:** якщо задано `MYGIT_TLS_CERT` і `MYGIT_TLS_KEY`, сервер слухає HTTPS самостійно.
 > Інакше (рекомендовано) розмістіть MyGit за reverse-proxy (Caddy/Nginx) із TLS-termination.

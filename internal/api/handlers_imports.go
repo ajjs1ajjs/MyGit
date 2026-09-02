@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ajjs1ajjs/MyGit/internal/git"
 	"github.com/ajjs1ajjs/MyGit/internal/storage"
 )
 
@@ -188,23 +190,29 @@ func (a *App) handleImportProject(w http.ResponseWriter, r *http.Request) {
 	if repo.DefaultBranch == "" {
 		repo.DefaultBranch = "main"
 	}
+	if !git.ValidRefName(repo.DefaultBranch) {
+		writeErr(w, http.StatusBadRequest, "Invalid default branch name")
+		return
+	}
 	if existing, _ := a.Store.GetRepoByPath(repo.Path); existing != nil {
 		writeErr(w, http.StatusBadRequest, "A repository with this name already exists")
 		return
 	}
 
-	// custom_disk_path: absolute physical directory, superuser only.
+	// custom_disk_path: absolute physical directory inside the configured
+	// custom storage root, superuser only.
 	targetDir := ""
 	if body.CustomDiskPath != "" {
 		if !p.IsSuper {
 			writeErr(w, http.StatusForbidden, "Custom storage paths require admin access")
 			return
 		}
-		targetDir = filepath.Clean(body.CustomDiskPath)
-		if !filepath.IsAbs(targetDir) {
-			writeErr(w, http.StatusBadRequest, "Custom storage path must be absolute")
+		dir, ok := a.allowedCustomDir(body.CustomDiskPath)
+		if !ok {
+			writeErr(w, http.StatusBadRequest, "Custom storage path must be an absolute directory inside MYGIT_CUSTOM_REPOS_ROOT")
 			return
 		}
+		targetDir = dir
 		repo.StoragePath = targetDir
 	} else {
 		targetDir = a.Git.RepoPath(ownerPath, body.Name)
@@ -286,6 +294,12 @@ func (a *App) resolveCloneURL(p *principal, provider string, body importRequest,
 		if body.RepoName == "" {
 			return "", fmt.Errorf("repo_name is required")
 		}
+		// The repo name is embedded into a URL carrying the access token: a
+		// crafted name (e.g. containing "@" or "..") could redirect the token
+		// to a third-party host. Restrict it to safe path segments.
+		if !validProviderRepoName(body.RepoName) {
+			return "", fmt.Errorf("repo_name must be a GitHub 'owner/repo' path of safe characters")
+		}
 		return "https://x-access-token:" + url.QueryEscape(token) + "@github.com/" + body.RepoName + ".git", nil
 	case "gitlab":
 		tok, _ := a.Store.GetIntegrationToken(p.UserID, "gitlab")
@@ -296,14 +310,58 @@ func (a *App) resolveCloneURL(p *principal, provider string, body importRequest,
 		if body.RepoName == "" {
 			return "", fmt.Errorf("repo_name is required")
 		}
+		if !validProviderRepoName(body.RepoName) {
+			return "", fmt.Errorf("repo_name must be a GitLab 'owner/repo' path of safe characters")
+		}
 		return "https://oauth2:" + url.QueryEscape(token) + "@gitlab.com/" + body.RepoName + ".git", nil
 	default: // custom
 		u, err := url.Parse(body.CloneURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			return "", fmt.Errorf("clone_url must be a valid http(s) URL")
 		}
+		// The server makes an outbound request to this URL: refuse loopback
+		// and link-local targets (cloud metadata, internal-only services).
+		if isBlockedCloneHost(u.Hostname()) {
+			return "", fmt.Errorf("clone_url must not point to a loopback or link-local address")
+		}
 		return body.CloneURL, nil
 	}
+}
+
+// validProviderRepoName restricts github/gitlab repo_name to safe
+// "owner/repo" path segments (no "@", "..", ":" or exotic characters).
+func validProviderRepoName(s string) bool {
+	if s == "" || len(s) > 200 {
+		return false
+	}
+	for _, part := range strings.Split(s, "/") {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+		for _, c := range part {
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// isBlockedCloneHost reports whether host is a loopback or link-local
+// address (including cloud metadata endpoints) or a localhost name.
+func isBlockedCloneHost(host string) bool {
+	h := strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]"))
+	if h == "" {
+		return true
+	}
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") || h == "metadata.google.internal" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
 }
 
 // --- server disk browser (admin) ---

@@ -1,5 +1,45 @@
 # Changelog
 
+## [3.4.0] - 2026-09-02
+
+### 🔴 Безпека (критичні)
+
+- **Закрито git option injection** — `ref`/`sha`-аргументи з запитів (tree/raw/blob/blame/commits/commit detail/diff) тепер валідуються (`HEAD`, hex-SHA або коректне ім'я ref; валідатор `git.ValidRefName` — чиста реалізація git-check-ref-format без субпроцесу). Раніше `ref=--output=<шлях>` дозволяв `git log --output=` — **довільний запис файлу** будь-якому аутентифікованому читачу. `default_branch` валідовується при створенні/оновленні/імпорті репозиторію. Regression: `TestRefOptionInjectionRejected`.
+- **`custom_disk_path` обмежено коренем** — нова змінна `MYGIT_CUSTOM_REPOS_ROOT` (дефолт — базова директорія даних). Створення репозиторію з кастомним шляхом поза коренем відхиляється; **видалення проєкту** більше не робить `RemoveAll` для шляхів поза коренем (раніше помилковий `custom_disk_path=/` при видаленні зніс би весь диск).
+
+### 🛡 Безпека
+
+- **Git smart HTTP під rate limiting** (120 req/хв/IP) — кожен запит спавнить git-процес, Basic auth викликає bcrypt: необмежені запити = CPU DoS і brute-force канал.
+- **`Secure` cookie та HSTS працюють за reverse proxy** — при `MYGIT_TRUST_PROXY=1` враховується `X-Forwarded-Proto` (раніше обидва прапорці ніколи не вмикались у рекомендованому деплої за проксі).
+- **Webhooks — роль maintainer (40)** замість guest (10): створення/видалення хуків — конфігурація репозиторію; читач більше не може видаляти глобальні хуки.
+- **`http.Server` таймаути** — `ReadHeaderTimeout: 10s`, `IdleTimeout: 120s` (slowloris); Read/Write навмисно не обмежені, щоб не різати стрімінг git push.
+- **Імпорт**: `repo_name` для github/gitlab валідовується (crafted ім'я з `@` могло б перенаправити інтеграційний токен на сторонній хост); `clone_url` відхиляє loopback/link-local хости (metadata SSRF).
+
+### 🐞 Виправлено
+
+- **Перейменування користувача мігрує репозиторії**: адмін-перейменування username тепер оновлює `repositories.path` і фізично переносить `repos/<old>/` → `repos/<new>/` (раніше всі репо користувача «зникали» з веб і git-URL). Regression: `TestUsernameRenameMigratesRepos`.
+- **Git RPC**: помилка git-процесу без pack-даних тепер віддається як **HTTP 500** (раніше 200 з обрізаним тілом); stderr захоплюється окремо — `warning:` більше не можуть коруптувати packfile. Regression: `TestGitRPCErrorReturns500`.
+- **Бекапи**: репозиторії з `custom_disk_path` тепер потрапляють в архів (раніше — сліпа зона); БД знімається через `VACUUM INTO` (консистентна копія замість сирої db+wal під час записів); шифрування архівів (`encryptFile`/`decryptFile`) спрощено до симетричного AES-256-GCM і покрито новим roundtrip-тестом. Regression: `TestBackupEncryptRoundtrip`.
+- **Fork репозиторію з custom path** клонував стандартну (неіснуючу) директорію — тепер через `repoDir()`.
+- **`DELETE /projects/{id}`** чистить також issue/MR-коментарі, лейбли та milestones (без сирітських рядків).
+- `/api/v1/health` перевіряє БД (`Ping`) — статичний `ok` приховував мертву SQLite.
+- `visibility` у PATCH проєкту валідовується (public/private/internal); списки issues/MR обмежені 500 записами; email у публічному профілі віддається лише власнику та superuser'у; exec-path git визначається один раз на процес (раніше — зайвий субпроцес на кожну операцію); метадані git мають таймаут 120s.
+
+### 🧹 Прибрано зайве (dead links / cleanup)
+
+- Мертве посилання на «сайт» `https://ajjs1ajjs.github.io/MyGit/` (HTTP 404) — з README видалено бейдж `Website` та «Офіційний сайт».
+- Видалено `.github/workflows/pages.yml` — публікував сирій вміст репозиторію як Pages без `index.html` (корінь завжди 404), мав BOM і непінні actions.
+- README: прибрано застарілий блок «MyGit — Source Code» (посилання «Готовий продукт деплоїться в» вказувало на цей самий репозиторій), дублікат бейджа `License`, порожні посилання `()` у бейджів, BOM.
+
+### 🔧 Воркфлоу
+
+- `release.yml`: публікація релізу переведена з кастомного `secrets.PUBLIC_RELEASE_TOKEN` на вбудований `GITHUB_TOKEN`; повторний запуск тегу оновлює assets через `gh release upload --clobber`.
+- `ci.yml`: `permissions: contents: read` (least privilege).
+
+### 📝 Примітки
+
+- **Зміна поведінки:** `custom_disk_path` тепер має бути всередині `MYGIT_CUSTOM_REPOS_ROOT` (дефолт — `MYGIT_BASE_DIR`). Існуючі репозиторії з шляхами поза коренем працюють, але при видаленні їх каталог не зачіпається (лише DB-запис).
+
 ## [3.3.0] - 2026-09-01
 
 ### ✨ Додано

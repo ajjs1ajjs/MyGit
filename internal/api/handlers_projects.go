@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/base64"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -110,6 +111,12 @@ func (a *App) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	if defBranch == "" {
 		defBranch = "main"
 	}
+	// default_branch is later passed to git as an argument: only a valid ref
+	// name can ever be stored here (blocks git option injection).
+	if !git.ValidRefName(defBranch) {
+		writeErr(w, http.StatusBadRequest, "Invalid default branch name")
+		return
+	}
 	ownerID, _ := anyInt64(body.OwnerID)
 	ownerType, ownerPath, ownerID, group, ok := a.resolveOwner(w, r, p, body.OwnerType, ownerID)
 	if !ok {
@@ -137,11 +144,15 @@ func (a *App) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusForbidden, "Custom storage paths require admin access")
 			return
 		}
-		targetDir = filepath.Clean(body.CustomDiskPath)
-		if !filepath.IsAbs(targetDir) {
-			writeErr(w, http.StatusBadRequest, "Custom storage path must be absolute")
+		// Bounded custom storage: the directory must live inside the
+		// configured custom storage root so neither creation nor later
+		// deletion can ever touch arbitrary locations on disk.
+		dir, ok := a.allowedCustomDir(body.CustomDiskPath)
+		if !ok {
+			writeErr(w, http.StatusBadRequest, "Custom storage path must be an absolute directory inside MYGIT_CUSTOM_REPOS_ROOT")
 			return
 		}
+		targetDir = dir
 		repo.StoragePath = targetDir
 	}
 	id, err := a.Store.CreateRepo(repo)
@@ -176,6 +187,59 @@ func validRepoName(name string) bool {
 	return true
 }
 
+// safeRefArg reports whether ref may safely be passed to git as an argument.
+// Accepts "HEAD", full/abbreviated hex SHAs and valid ref names; everything
+// else — especially anything starting with "-" (git option injection, e.g.
+// `git log --output=<path>` = arbitrary file write) — is rejected.
+func safeRefArg(ref string) bool {
+	if ref == "" {
+		return false
+	}
+	if ref == "HEAD" {
+		return true
+	}
+	if isHexSHA(ref) {
+		return true
+	}
+	return git.ValidRefName(ref)
+}
+
+func isHexSHA(s string) bool {
+	if len(s) < 4 || len(s) > 40 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+// allowedCustomDir validates a superuser-provided absolute storage directory:
+// it must live inside the configured custom storage root (MYGIT_CUSTOM_REPOS_ROOT,
+// default: the base data dir) and must not be the root itself, so that neither
+// project creation nor project deletion can ever touch arbitrary directories.
+func (a *App) allowedCustomDir(raw string) (string, bool) {
+	p := filepath.Clean(raw)
+	if !filepath.IsAbs(p) {
+		return "", false
+	}
+	root := filepath.Clean(a.Cfg.CustomReposRoot)
+	if root == "" {
+		return "", false
+	}
+	rel, err := filepath.Rel(root, p)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return "", false
+	}
+	// Belt and braces: never treat a filesystem volume root as a repo dir.
+	if p == "/" || (len(p) == 3 && p[1] == ':' && os.IsPathSeparator(p[2])) {
+		return "", false
+	}
+	return p, true
+}
+
 func (a *App) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	p := a.principal(r)
 	id := mustPathInt(r, "id")
@@ -198,12 +262,29 @@ func (a *App) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		fields["description"] = v
 	}
 	if v, ok := body["visibility"].(string); ok {
+		if v != "public" && v != "private" && v != "internal" {
+			writeErr(w, http.StatusBadRequest, "visibility must be public, private or internal")
+			return
+		}
 		fields["visibility"] = v
 	}
 	if v, ok := body["default_branch"].(string); ok {
+		// See handleCreateProject: git receives this value as an argument.
+		if v == "" || !git.ValidRefName(v) {
+			writeErr(w, http.StatusBadRequest, "Invalid default branch name")
+			return
+		}
 		fields["default_branch"] = v
 	}
-	_ = a.Store.UpdateRepo(id, fields)
+	if len(fields) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"detail": "updated"})
+		return
+	}
+	if err := a.Store.UpdateRepo(id, fields); err != nil {
+		writeErr(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	a.Store.AddAuditEvent("repo.update", p.UserID, p.Username, "repository", repo.Path, "Repository "+repo.Path+" updated")
 	writeJSON(w, http.StatusOK, map[string]any{"detail": "updated"})
 }
 
@@ -236,7 +317,14 @@ func (a *App) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = a.Git.Remove(owner, name)
 	if repo.StoragePath != "" {
-		_ = os.RemoveAll(repo.StoragePath)
+		// Data-loss guard: only recurse into a custom directory that is
+		// inside the configured custom storage root. A stray or legacy path
+		// outside it is left on disk and reported to the log.
+		if dir, ok := a.allowedCustomDir(repo.StoragePath); ok {
+			_ = os.RemoveAll(dir)
+		} else {
+			log.Printf("repo %d: custom storage path %q is outside MYGIT_CUSTOM_REPOS_ROOT; directory left on disk", repo.ID, repo.StoragePath)
+		}
 	}
 	_ = a.Store.DeleteRepo(id)
 	writeJSON(w, http.StatusOK, map[string]any{"detail": "deleted"})
@@ -255,7 +343,9 @@ func (a *App) handleForkProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "Invalid repository path")
 		return
 	}
-	srcDir := a.Git.RepoPath(owner, name)
+	// repoDir honors a custom storage path: forking a custom-path repo from
+	// the standard location cloned a missing (or wrong) directory.
+	srcDir := a.repoDir(repo)
 	newPath := p.Username + "/" + repo.Name
 	if !auth.ValidUsername(p.Username) {
 		writeErr(w, http.StatusBadRequest, "Invalid owner")
@@ -324,6 +414,10 @@ func (a *App) handleTree(w http.ResponseWriter, r *http.Request) {
 	if ref == "" {
 		ref = repo.DefaultBranch
 	}
+	if !safeRefArg(ref) {
+		writeErr(w, http.StatusBadRequest, "Invalid ref")
+		return
+	}
 	path := r.URL.Query().Get("path")
 	recursive := r.URL.Query().Get("recursive") == "1" || r.URL.Query().Get("recursive") == "true"
 	entries, err := a.Git.Tree(dir, ref, path, recursive)
@@ -346,6 +440,10 @@ func (a *App) handleRaw(w http.ResponseWriter, r *http.Request) {
 	ref := r.URL.Query().Get("ref")
 	if ref == "" {
 		ref = repo.DefaultBranch
+	}
+	if !safeRefArg(ref) {
+		writeErr(w, http.StatusBadRequest, "Invalid ref")
+		return
 	}
 	path := r.URL.Query().Get("path")
 	content, err := a.Git.Blob(dir, ref, path)
@@ -378,8 +476,16 @@ func (a *App) handleBlob(w http.ResponseWriter, r *http.Request) {
 		if ref == "" {
 			ref = repo.DefaultBranch
 		}
+		if !safeRefArg(ref) {
+			writeErr(w, http.StatusBadRequest, "Invalid ref")
+			return
+		}
 		content, err = a.Git.Blob(dir, ref, path)
 	} else {
+		if !safeRefArg(sha) {
+			writeErr(w, http.StatusBadRequest, "Invalid sha")
+			return
+		}
 		content, err = a.Git.BlobAtSHA(dir, sha)
 	}
 	if err != nil {
@@ -412,6 +518,10 @@ func (a *App) handleBlame(w http.ResponseWriter, r *http.Request) {
 	if ref == "" {
 		ref = repo.DefaultBranch
 	}
+	if !safeRefArg(ref) {
+		writeErr(w, http.StatusBadRequest, "Invalid ref")
+		return
+	}
 	path := r.URL.Query().Get("path")
 	lines, err := a.Git.Blame(dir, ref, path)
 	if err != nil {
@@ -433,6 +543,10 @@ func (a *App) handleCommits(w http.ResponseWriter, r *http.Request) {
 	ref := r.URL.Query().Get("ref")
 	if ref == "" {
 		ref = repo.DefaultBranch
+	}
+	if !safeRefArg(ref) {
+		writeErr(w, http.StatusBadRequest, "Invalid ref")
+		return
 	}
 	limit := 50
 	if v := r.URL.Query().Get("page"); v != "" {
@@ -461,6 +575,10 @@ func (a *App) handleCommitDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	dir := a.repoDir(repo)
 	sha := urlParam(r, "sha")
+	if !safeRefArg(sha) {
+		writeErr(w, http.StatusBadRequest, "Invalid sha")
+		return
+	}
 	commit, err := a.Git.CommitDetail(dir, sha)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "Commit not found")
@@ -476,6 +594,10 @@ func (a *App) handleCommitDiff(w http.ResponseWriter, r *http.Request) {
 	}
 	dir := a.repoDir(repo)
 	sha := urlParam(r, "sha")
+	if !safeRefArg(sha) {
+		writeErr(w, http.StatusBadRequest, "Invalid sha")
+		return
+	}
 	diffs, err := a.Git.DiffFiles(dir, sha+"^", sha)
 	if err != nil {
 		// First commit in the repo has no parent; fall back to the empty tree.

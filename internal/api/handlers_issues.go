@@ -463,7 +463,10 @@ func (a *App) handleListWebhooks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
-	repo := a.requireRepoAccess(w, r)
+	// Managing webhooks is a maintainer-level operation: hooks receive repo
+	// events and (once dispatch lands) make the server send HTTP requests,
+	// so a plain reader/guest must not create them.
+	repo := a.requireRepoWrite(w, r, 40)
 	if repo == nil {
 		return
 	}
@@ -502,7 +505,8 @@ func (a *App) handleCreateWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleDeleteWebhook(w http.ResponseWriter, r *http.Request) {
-	repo := a.requireRepoAccess(w, r)
+	// See handleCreateWebhook: hooks are maintainer-level configuration.
+	repo := a.requireRepoWrite(w, r, 40)
 	if repo == nil {
 		return
 	}

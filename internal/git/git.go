@@ -1,6 +1,7 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -10,12 +11,18 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Backend struct {
 	Binary string
 	Root   string
+	// exec-path is probed once per process (not per git invocation) and
+	// prepended to PATH so git-* subcommands resolve even under a minimal
+	// service PATH. Probing on every call used to spawn an extra process.
+	execOnce sync.Once
+	execPath string
 }
 
 func New(binary, root string) *Backend {
@@ -23,6 +30,15 @@ func New(binary, root string) *Backend {
 		binary = "git"
 	}
 	return &Backend{Binary: binary, Root: root}
+}
+
+func (b *Backend) gitExecPath() string {
+	b.execOnce.Do(func() {
+		if ep, err := exec.Command(b.Binary, "--exec-path").Output(); err == nil {
+			b.execPath = strings.TrimSpace(string(ep))
+		}
+	})
+	return b.execPath
 }
 
 func (b *Backend) RepoPath(owner, name string) string {
@@ -39,15 +55,12 @@ func (b *Backend) cmd(dir string, args ...string) (*exec.Cmd, context.CancelFunc
 	c := exec.CommandContext(ctx, b.Binary, args...)
 	c.Dir = dir
 	c.Stdin = strings.NewReader("")
-	if ep, err := exec.Command(b.Binary, "--exec-path").Output(); err == nil {
-		execPath := strings.TrimSpace(string(ep))
-		if execPath != "" {
-			env := os.Environ()
-			c.Env = append(env,
-				"GIT_EXEC_PATH="+execPath,
-				"PATH="+execPath+string(os.PathListSeparator)+os.Getenv("PATH"),
-			)
-		}
+	if ep := b.gitExecPath(); ep != "" {
+		env := os.Environ()
+		c.Env = append(env,
+			"GIT_EXEC_PATH="+ep,
+			"PATH="+ep+string(os.PathListSeparator)+os.Getenv("PATH"),
+		)
 	}
 	return c, cancel
 }
@@ -136,23 +149,46 @@ func (b *Backend) InfoRefs(dir, service string) ([]byte, error) {
 	args := []string{sub, "--stateless-rpc", "--advertise-refs", dir}
 	cmd, cancel := b.cmd(dir, args...)
 	defer cancel()
-	out, err := cmd.CombinedOutput()
+	// stderr is captured separately: a stray warning must never end up in
+	// the pack-protocol advertisement (it used to corrupt clone responses).
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("git %v: %v: %s", args, err, out)
+		return nil, fmt.Errorf("git %v: %v: %s", sub, err, truncateStderr(stderr.String()))
 	}
 	header := fmt.Sprintf("# service=%s\n", service)
 	headerPkt := pktLine(header) + "0000"
 	return append([]byte(headerPkt), out...), nil
 }
 
-// RPC streams the request body to git upload-pack/receive-pack and returns stdout.
+// RPC streams the request body to git upload-pack/receive-pack and returns
+// stdout only; stderr is attached to the error, if any.
 func (b *Backend) RPC(dir, service string, input io.Reader) ([]byte, error) {
 	sub := strings.TrimPrefix(service, "git-")
 	args := []string{sub, "--stateless-rpc", dir}
 	cmd, cancel := b.cmd(dir, args...)
 	defer cancel()
 	cmd.Stdin = input
-	return cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return out, fmt.Errorf("git %s: %v: %s", sub, err, truncateStderr(stderr.String()))
+	}
+	return out, nil
+}
+
+// truncateStderr keeps git's stderr diagnostics bounded in error responses.
+func truncateStderr(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "no stderr output"
+	}
+	if len(s) > 300 {
+		s = s[:300] + "..."
+	}
+	return s
 }
 
 func pktLine(s string) string {
@@ -163,7 +199,9 @@ func pktLine(s string) string {
 // --- metadata ---
 
 func run(binary, dir string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// 120s: blame/log on very large repositories can legitimately take
+	// longer than a minute; 60s used to abort them mid-run.
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = dir
@@ -594,15 +632,41 @@ func (b *Backend) DeleteBranch(dir, name string) error {
 	return nil
 }
 
-// ValidRef returns true if ref is a safe git ref name. Guarding against branch
-// names that start with "-" prevents git option injection, and check-ref-format
-// rejects any name that could escape the ref namespace.
+// ValidRef reports whether ref is a safe git ref name (used for branch
+// arguments). Implemented in pure Go following git-check-ref-format(1) rules:
+// a name starting with "-" would be parsed as a git option (argument
+// injection), and the other rules keep the value inside the ref namespace.
+// Spawns no subprocess so it is cheap enough to validate every
+// user-supplied ref argument.
 func (b *Backend) ValidRef(ref string) bool {
-	if ref == "" || strings.HasPrefix(ref, "-") {
+	return ValidRefName(ref)
+}
+
+// ValidRefName is the package-level ref-name validator (see Backend.ValidRef).
+func ValidRefName(ref string) bool {
+	if ref == "" || len(ref) > 250 {
 		return false
 	}
-	if _, err := run(b.Binary, "", "check-ref-format", "--branch", ref); err != nil {
+	if strings.HasPrefix(ref, "-") || strings.HasPrefix(ref, "/") || strings.HasSuffix(ref, "/") || strings.HasSuffix(ref, ".") {
 		return false
+	}
+	if strings.Contains(ref, "..") || strings.Contains(ref, "//") || strings.Contains(ref, "@{") || ref == "@" {
+		return false
+	}
+	for _, comp := range strings.Split(ref, "/") {
+		if comp == "" || strings.HasPrefix(comp, ".") || strings.HasSuffix(comp, ".lock") {
+			return false
+		}
+	}
+	for _, r := range ref {
+		// control chars and spaces are never valid in a ref name
+		if r <= 0x20 || r == 0x7f {
+			return false
+		}
+		switch r {
+		case '~', '^', ':', '?', '*', '[', '\\':
+			return false
+		}
 	}
 	return true
 }

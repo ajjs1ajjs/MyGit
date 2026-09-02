@@ -46,10 +46,13 @@ const principalKey ctxKey = 0
 func (a *App) Handler() http.Handler {
 	r := chi.NewRouter()
 
-	// smart git HTTP
-	r.Get("/{owner}/{repo}/info/refs", a.handleGitInfoRefs)
-	r.Post("/{owner}/{repo}/git-upload-pack", a.handleGitRPC)
-	r.Post("/{owner}/{repo}/git-receive-pack", a.handleGitRPC)
+	// smart git HTTP — rate limited: every request spawns a git subprocess
+	// and Basic auth runs bcrypt, so unbounded requests are both a CPU DoS
+	// and a credential-stuffing channel.
+	gitLimiter := newRateLimiter(120, time.Minute)
+	r.With(a.withRateLimit(gitLimiter)).Get("/{owner}/{repo}/info/refs", a.handleGitInfoRefs)
+	r.With(a.withRateLimit(gitLimiter)).Post("/{owner}/{repo}/git-upload-pack", a.handleGitRPC)
+	r.With(a.withRateLimit(gitLimiter)).Post("/{owner}/{repo}/git-receive-pack", a.handleGitRPC)
 
 	// liveness/health (unauthenticated) — used by installers/uptime checks to
 	// verify THIS service is up, not whatever else happens to be on the port.
@@ -210,8 +213,13 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 }
 
 // handleHealth reports that this MyGit process is up (used by installers and
-// external uptime checks). It is unauthenticated on purpose.
+// external uptime checks). It is unauthenticated on purpose. The SQLite
+// handle must respond — a static "ok" used to hide a dead database.
 func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if err := a.Store.DB.Ping(); err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "database unavailable")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
@@ -329,14 +337,27 @@ func (a *App) principal(r *http.Request) *principal {
 	return nil
 }
 
+// isHTTPS reports whether the request arrived over HTTPS — either terminated
+// by this process or, when MYGIT_TRUST_PROXY=1, marked as https by the
+// trusted reverse proxy via X-Forwarded-Proto. Controls Secure cookies and
+// HSTS (both used to stay off in the recommended proxy deployment).
+func (a *App) isHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return a.Cfg.TrustProxy && r.Header.Get("X-Forwarded-Proto") == "https"
+}
+
 func (a *App) withSecurity(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		// HSTS only applies when TLS is terminated by this process.
-		if r.TLS != nil {
+		// HSTS applies when TLS is terminated by this process, or — behind
+		// a trusted reverse proxy (MYGIT_TRUST_PROXY=1) — when the proxy
+		// marks the request as https via X-Forwarded-Proto.
+		if a.isHTTPS(r) {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 		// Vue injects some styles via inline style attributes; scripts are fully

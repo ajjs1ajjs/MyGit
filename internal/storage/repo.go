@@ -374,7 +374,12 @@ func (st *Store) DeleteRepo(id int64) error {
 	for _, q := range []string{
 		`DELETE FROM access WHERE repository_id = ?`,
 		`DELETE FROM protected_branches WHERE repository_id = ?`,
+		`DELETE FROM issue_comments WHERE issue_id IN (SELECT id FROM issues WHERE repository_id = ?)`,
+		`DELETE FROM issue_labels WHERE issue_id IN (SELECT id FROM issues WHERE repository_id = ?)`,
+		`DELETE FROM labels WHERE repository_id = ?`,
+		`DELETE FROM milestones WHERE repository_id = ?`,
 		`DELETE FROM issues WHERE repository_id = ?`,
+		`DELETE FROM mr_comments WHERE merge_request_id IN (SELECT id FROM merge_requests WHERE repository_id = ?)`,
 		`DELETE FROM merge_requests WHERE repository_id = ?`,
 		`DELETE FROM webhooks WHERE repository_id = ?`,
 		`DELETE FROM wiki_pages WHERE repository_id = ?`,
@@ -385,6 +390,62 @@ func (st *Store) DeleteRepo(id int64) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// RenameUserRepoPaths rewrites stored "owner/name" repository paths after an
+// admin renames a user, so the repos stay reachable at the new username
+// (previously a rename silently orphaned every repository of that user).
+func (st *Store) RenameUserRepoPaths(userID int64, oldUsername, newUsername string) error {
+	rows, err := st.DB.Query(`SELECT id, path FROM repositories WHERE owner_type = 'user' AND owner_id = ?`, userID)
+	if err != nil {
+		return err
+	}
+	type idPath struct {
+		id   int64
+		path string
+	}
+	var repos []idPath
+	for rows.Next() {
+		var r idPath
+		if err := rows.Scan(&r.id, &r.path); err != nil {
+			rows.Close()
+			return err
+		}
+		repos = append(repos, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	tx, err := st.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	prefix := oldUsername + "/"
+	now := Now()
+	for _, r := range repos {
+		if !strings.HasPrefix(r.path, prefix) {
+			continue // poisoned/legacy row — leave untouched
+		}
+		newPath := newUsername + "/" + strings.TrimPrefix(r.path, prefix)
+		if _, err := tx.Exec(`UPDATE repositories SET path = ?, updated_at = ? WHERE id = ?`, newPath, now, r.id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ListCustomStorageRepos returns repositories stored at a custom (absolute)
+// storage location — those live outside RepoRoot and must be included in
+// backups explicitly (they used to be a silent data-loss blind spot).
+func (st *Store) ListCustomStorageRepos() ([]Repository, error) {
+	rows, err := st.DB.Query(`SELECT ` + repoCols + ` FROM repositories WHERE COALESCE(storage_path, '') != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRepos(rows)
 }
 
 // --- access / roles ---
@@ -528,9 +589,9 @@ func (st *Store) ListIssues(repoID int64, state string) ([]Issue, error) {
 	var rows *sql.Rows
 	var err error
 	if state == "open" || state == "closed" {
-		rows, err = st.DB.Query(`SELECT id, repository_id, author_id, assignee_id, milestone_id, title, description, state, number, created_at, updated_at FROM issues WHERE repository_id = ? AND state = ? ORDER BY number DESC`, repoID, state)
+		rows, err = st.DB.Query(`SELECT id, repository_id, author_id, assignee_id, milestone_id, title, description, state, number, created_at, updated_at FROM issues WHERE repository_id = ? AND state = ? ORDER BY number DESC LIMIT 500`, repoID, state)
 	} else {
-		rows, err = st.DB.Query(`SELECT id, repository_id, author_id, assignee_id, milestone_id, title, description, state, number, created_at, updated_at FROM issues WHERE repository_id = ? ORDER BY number DESC`, repoID)
+		rows, err = st.DB.Query(`SELECT id, repository_id, author_id, assignee_id, milestone_id, title, description, state, number, created_at, updated_at FROM issues WHERE repository_id = ? ORDER BY number DESC LIMIT 500`, repoID)
 	}
 	if err != nil {
 		return nil, err
@@ -630,7 +691,7 @@ func (st *Store) GetMR(repoID int64, number int) (*MergeRequest, error) {
 }
 
 func (st *Store) ListMRs(repoID int64) ([]MergeRequest, error) {
-	rows, err := st.DB.Query(`SELECT id, repository_id, author_id, source_branch, target_branch, title, description, state, number, merge_commit_sha, created_at, updated_at FROM merge_requests WHERE repository_id = ? ORDER BY number DESC`, repoID)
+	rows, err := st.DB.Query(`SELECT id, repository_id, author_id, source_branch, target_branch, title, description, state, number, merge_commit_sha, created_at, updated_at FROM merge_requests WHERE repository_id = ? ORDER BY number DESC LIMIT 500`, repoID)
 	if err != nil {
 		return nil, err
 	}

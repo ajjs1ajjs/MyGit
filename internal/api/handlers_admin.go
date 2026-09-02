@@ -410,20 +410,16 @@ func (a *App) createBackupArchive() (string, error) {
 	gz := gzip.NewWriter(f)
 	tw := tar.NewWriter(gz)
 
-	addFile := func(path string) error {
+	addFileNamed := func(path, name string) error {
 		info, err := os.Lstat(path)
 		if err != nil || !info.Mode().IsRegular() {
 			return nil
-		}
-		rel, err := filepath.Rel(a.Cfg.BaseDir, path)
-		if err != nil {
-			return err
 		}
 		hdr, err := tar.FileInfoHeader(info, "")
 		if err != nil {
 			return err
 		}
-		hdr.Name = filepath.ToSlash(rel)
+		hdr.Name = name
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
 		}
@@ -435,11 +431,30 @@ func (a *App) createBackupArchive() (string, error) {
 		_, err = io.Copy(tw, src)
 		return err
 	}
+	addFile := func(path string) error {
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(a.Cfg.BaseDir, path)
+		if err != nil {
+			return err
+		}
+		return addFileNamed(path, filepath.ToSlash(rel))
+	}
 
-	// DB files
-	_ = addFile(a.Cfg.DBPath)
-	_ = addFile(a.Cfg.DBPath + "-wal")
-	_ = addFile(a.Cfg.DBPath + "-shm")
+	// DB snapshot: VACUUM INTO writes a consistent copy of the live database
+	// (raw db+wal+shm copies used to be torn when writes happened during the
+	// backup). Falls back to the raw files if the snapshot fails.
+	snapshot := filepath.Join(backupDir, fmt.Sprintf("db-snapshot-%d.db", time.Now().UnixNano()))
+	if _, err := a.Store.DB.Exec("VACUUM INTO ?", snapshot); err == nil {
+		_ = addFile(snapshot)
+		_ = os.Remove(snapshot)
+	} else {
+		_ = addFile(a.Cfg.DBPath)
+		_ = addFile(a.Cfg.DBPath + "-wal")
+		_ = addFile(a.Cfg.DBPath + "-shm")
+	}
 	_ = addFile(filepath.Join(filepath.Dir(a.Cfg.DBPath), ".mygit_jwt_secret"))
 
 	// Repos (bare repo dirs)
@@ -450,6 +465,29 @@ func (a *App) createBackupArchive() (string, error) {
 			}
 			return addFile(p)
 		})
+	}
+
+	// Repos stored at custom locations outside RepoRoot must be backed up
+	// too — they used to be a silent data-loss blind spot. They are archived
+	// under a custom-storage/ prefix so archive names stay unambiguous.
+	if custom, err := a.Store.ListCustomStorageRepos(); err == nil {
+		for _, rp := range custom {
+			dir, ok := a.allowedCustomDir(rp.StoragePath)
+			if !ok || dir == "" {
+				continue
+			}
+			base := filepath.Base(dir)
+			_ = filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+				if err != nil || !info.Mode().IsRegular() {
+					return nil
+				}
+				rel, relErr := filepath.Rel(dir, p)
+				if relErr != nil {
+					return nil
+				}
+				return addFileNamed(p, "custom-storage/"+base+"/"+filepath.ToSlash(rel))
+			})
+		}
 	}
 
 	if err := tw.Close(); err != nil {

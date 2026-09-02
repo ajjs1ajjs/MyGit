@@ -2,10 +2,27 @@ package api
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ajjs1ajjs/MyGit/internal/auth"
 )
+
+// renameDirRetry renames a directory, retrying briefly: on Windows renaming
+// a freshly written directory can transiently fail while antivirus or
+// indexer handles are still open.
+func renameDirRetry(oldDir, newDir string) error {
+	var err error
+	for i := 0; i < 30; i++ {
+		if err = os.Rename(oldDir, newDir); err == nil {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return err
+}
 
 // handleListUsers returns all users. Superuser only.
 func (a *App) handleListUsers(w http.ResponseWriter, r *http.Request) {
@@ -39,11 +56,16 @@ func (a *App) handleGetUserProfile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "User not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"id": u.ID, "username": u.Username, "email": u.Email,
+	// Email is personal data: expose it only to the owner and superusers.
+	out := map[string]any{
+		"id": u.ID, "username": u.Username,
 		"full_name": u.FullName, "bio": u.Bio,
 		"date_joined": u.CreatedAt,
-	})
+	}
+	if p := a.principal(r); p != nil && (p.IsSuper || p.Username == u.Username) {
+		out["email"] = u.Email
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handlePatchUser edits a user (admin). Username, email, full_name,
@@ -94,6 +116,7 @@ func (a *App) handlePatchUser(w http.ResponseWriter, r *http.Request) {
 			fields["email"] = email
 		}
 	}
+	newUsername := ""
 	if v, ok := body["username"].(string); ok {
 		name := auth.NormalizeUsername(v)
 		if !auth.ValidUsername(name) {
@@ -103,6 +126,9 @@ func (a *App) handlePatchUser(w http.ResponseWriter, r *http.Request) {
 		if existing, _ := a.Store.GetUserByUsername(name); existing != nil && existing.ID != u.ID {
 			writeErr(w, http.StatusBadRequest, "Username is already in use")
 			return
+		}
+		if name != u.Username {
+			newUsername = name
 		}
 		fields["username"] = name
 	}
@@ -124,9 +150,71 @@ func (a *App) handlePatchUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "Nothing to update")
 		return
 	}
+
+	// Renaming a user must migrate their repositories: stored paths are
+	// "username/name" and bare directories live under repos/<username>/.
+	// Without this a rename silently orphaned every repo of that user.
+	var renamedDirs [][2]string
+	if newUsername != "" {
+		repos, err := a.Store.ListAccessibleRepos(0, true)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "Database error")
+			return
+		}
+		var toRename []string // repo names
+		for _, rp := range repos {
+			if rp.OwnerType != "user" || rp.OwnerID != u.ID || rp.StoragePath != "" {
+				continue // custom-path repos live outside repos/<owner>/ on disk
+			}
+			parts := strings.SplitN(rp.Path, "/", 2)
+			if len(parts) != 2 || parts[0] != u.Username {
+				continue
+			}
+			newDir := a.Git.RepoPath(newUsername, parts[1])
+			if _, err := os.Stat(newDir); err == nil {
+				writeErr(w, http.StatusBadRequest, "Target repository directory already exists: "+newUsername+"/"+parts[1])
+				return
+			}
+			toRename = append(toRename, parts[1])
+		}
+		for _, name := range toRename {
+			oldDir := a.Git.RepoPath(u.Username, name)
+			newDir := a.Git.RepoPath(newUsername, name)
+			// os.Rename does not create the target parent directory.
+			if err := os.MkdirAll(filepath.Dir(newDir), 0o755); err != nil {
+				writeErr(w, http.StatusInternalServerError, "Failed to prepare repository directory")
+				return
+			}
+			if err := renameDirRetry(oldDir, newDir); err != nil {
+				for _, done := range renamedDirs {
+					_ = os.Rename(done[1], done[0])
+				}
+				writeErr(w, http.StatusInternalServerError, "Failed to move repository directory")
+				return
+			}
+			renamedDirs = append(renamedDirs, [2]string{oldDir, newDir})
+		}
+		// drop the old owner directory if it is now empty
+		_ = os.Remove(filepath.Join(a.Git.Root, u.Username))
+	}
+
 	if err := a.Store.UpdateUser(u.ID, fields); err != nil {
+		for _, done := range renamedDirs {
+			_ = os.Rename(done[1], done[0])
+		}
 		writeErr(w, http.StatusInternalServerError, "Database error")
 		return
+	}
+	if newUsername != "" {
+		if err := a.Store.RenameUserRepoPaths(u.ID, u.Username, newUsername); err != nil {
+			for _, done := range renamedDirs {
+				_ = os.Rename(done[1], done[0])
+			}
+			_ = a.Store.UpdateUser(u.ID, map[string]any{"username": u.Username})
+			writeErr(w, http.StatusInternalServerError, "Database error")
+			return
+		}
+		a.Store.AddAuditEvent("user.rename", actor.UserID, actor.Username, "user", u.Username, "User '"+u.Username+"' renamed to '"+newUsername+"'")
 	}
 	a.Store.AddAuditEvent("user.update", actor.UserID, actor.Username, "user", u.Username, "User "+u.Username+" updated")
 	writeJSON(w, http.StatusOK, map[string]any{"detail": "updated"})

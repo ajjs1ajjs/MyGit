@@ -26,7 +26,7 @@ func (a *App) refreshCookie() string { return fmt.Sprintf("mygit_refresh_%d", a.
 // SameSite=Strict blocks cross-site sending, mitigating CSRF. Secure is only
 // enabled over TLS so plain-http dev keeps working.
 func (a *App) setAuthCookies(w http.ResponseWriter, r *http.Request, access, refresh string) {
-	secure := r.TLS != nil
+	secure := a.isHTTPS(r)
 	http.SetCookie(w, &http.Cookie{Name: a.accessCookie(), Value: access, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
 	http.SetCookie(w, &http.Cookie{Name: a.refreshCookie(), Value: refresh, Path: "/api/v1/auth", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
 }

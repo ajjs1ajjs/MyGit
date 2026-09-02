@@ -97,6 +97,14 @@ func (a *App) handleGitRPC(w http.ResponseWriter, r *http.Request) {
 	// buffering it in memory — large pushes used to consume the whole payload.
 	out, err := a.Git.RPC(dir, service, io.LimitReader(r.Body, 256<<20))
 	if err != nil {
+		if len(out) == 0 {
+			// git died before producing any pack data (bad input, missing
+			// repo directory, ...) — surface a real error, not HTTP 200.
+			writeErr(w, http.StatusInternalServerError, "git error: "+err.Error())
+			return
+		}
+		// git exited non-zero but produced a pack reply (per-ref "ng"
+		// statuses from a rejected pre-receive hook) — deliver it as-is.
 		w.Header().Set("Content-Type", "application/x-git-"+strings.TrimPrefix(service, "git-")+"-result")
 		_, _ = w.Write(out)
 		return

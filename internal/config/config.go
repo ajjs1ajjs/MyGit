@@ -27,9 +27,13 @@ type Config struct {
 	// BackupUploadURL is the base URL (S3-compatible PUT or plain HTTP server)
 	// that backup archives are uploaded to when a schedule has upload=1.
 	BackupUploadURL string
-	// TrustProxy enables trusting X-Forwarded-For for rate limiting. Only
-	// enable when a trusted reverse proxy always overwrites the header.
+	// TrustProxy enables trusting X-Forwarded-For (rate limiting) and
+	// X-Forwarded-Proto (Secure cookies, HSTS). Only enable when a trusted
+	// reverse proxy always overwrites both headers.
 	TrustProxy bool
+	// CustomReposRoot bounds the superuser-only custom_disk_path feature:
+	// custom repo directories must live inside it (default: BaseDir).
+	CustomReposRoot string
 }
 
 func Default() *Config {
@@ -53,6 +57,7 @@ func Default() *Config {
 		BackupKey:         os.Getenv("MYGIT_BACKUP_KEY"),
 		BackupUploadURL:   os.Getenv("MYGIT_BACKUP_UPLOAD_URL"),
 		TrustProxy:        os.Getenv("MYGIT_TRUST_PROXY") == "1" || os.Getenv("MYGIT_TRUST_PROXY") == "true",
+		CustomReposRoot:   envOr("MYGIT_CUSTOM_REPOS_ROOT", base),
 	}
 }
 
