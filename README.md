@@ -15,6 +15,8 @@
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-blue.svg)
 ![PWA](https://img.shields.io/badge/PWA-offline-cyan)
 
+[**🌐 Live Site**](https://ajjs1ajjs.github.io/MyGit/) · [Releases](https://github.com/ajjs1ajjs/MyGit/releases) · [Actions](https://github.com/ajjs1ajjs/MyGit/actions)
+
 </div>
 
 ---
