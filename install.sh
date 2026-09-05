@@ -9,7 +9,7 @@ INSTALL_DIR="/opt/mygit"
 DATA_DIR="/var/lib/mygit"
 REPOS_DIR="/var/lib/mygit/repos"
 SERVICE_NAME="mygit"
-VERSION="${MYGIT_VERSION:-latest}"
+MYGIT_VER="${MYGIT_VERSION:-latest}"
 REPO="ajjs1ajjs/MyGit"
 # Port to bind. If it is already taken, the script picks the next free port
 # automatically (you can pin one with MYGIT_PORT).
@@ -86,13 +86,13 @@ case "$(uname -m)" in
 esac
 BINARY_NAME="mygit-linux-${ARCH}"
 
-if [ "$VERSION" = "latest" ]; then
+if [ "$MYGIT_VER" = "latest" ]; then
     DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/${BINARY_NAME}"
 else
-    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${BINARY_NAME}"
+    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${MYGIT_VER}/${BINARY_NAME}"
 fi
 
-echo "[1/4] Downloading MyGit ${VERSION} (${BINARY_NAME})..."
+echo "[1/4] Downloading MyGit ${MYGIT_VER} (${BINARY_NAME})..."
 TMP_BIN="$(mktemp)"
 if command -v curl >/dev/null 2>&1; then
     curl -fsSL "$DOWNLOAD_URL" -o "$TMP_BIN" || { echo "ERROR: download failed"; rm -f "$TMP_BIN"; exit 1; }
@@ -193,10 +193,10 @@ done
 echo "[4/4] Done."
 echo ""
 if [ "$IS_UPDATE" = "1" ]; then
-    echo "MyGit updated: ${OLD_VERSION} -> ${NEW_VERSION:-$VERSION}"
+    echo "MyGit updated: ${OLD_VERSION} -> ${NEW_VERSION:-$MYGIT_VER}"
     echo "Config, repositories and users preserved."
 else
-    echo "MyGit installed. Version: ${VERSION}"
+    echo "MyGit installed. Version: ${MYGIT_VER}"
 fi
 echo ""
 echo "Dashboard: http://localhost:$PORT/"
