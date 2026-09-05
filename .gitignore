@@ -1,0 +1,33 @@
+# Go
+/bin/
+/dist/
+/mygit
+/mygit.exe
+*.test
+*.out
+
+# Frontend build / deps
+frontend/node_modules/
+frontend/dist/
+
+# Database / repos
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+repos/
+
+# Secrets
+.mygit_jwt_secret
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+logs/

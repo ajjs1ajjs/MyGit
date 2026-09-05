@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" width="1280" height="360">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="0.5" stop-color="#161b22"/>
+      <stop offset="1" stop-color="#0d1117"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#58a6ff"/>
+      <stop offset="1" stop-color="#0969da"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="9" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="textGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="360" fill="url(#bg)"/>
+
+  <g opacity="0.06" stroke="#58a6ff" stroke-width="1">
+    <path d="M0 90H1280M0 180H1280M0 270H1280M320 0V360M640 0V360M960 0V360"/>
+  </g>
+
+  <g transform="translate(64,96)" filter="url(#glow)">
+    <circle cx="52" cy="168" r="10" fill="#58a6ff"/>
+    <circle cx="52" cy="72" r="10" fill="#58a6ff"/>
+    <circle cx="156" cy="120" r="10" fill="#1a7f37"/>
+    <path d="M52 72 C 96 72 96 168 156 168" fill="none" stroke="#58a6ff" stroke-width="7" stroke-linecap="round"/>
+    <path d="M52 168 C 96 168 96 72 156 72" fill="none" stroke="#3fb950" stroke-width="7" stroke-linecap="round"/>
+    <path d="M166 112 L196 112 L196 128 L166 128 Z" fill="#58a6ff" opacity="0.7"/>
+    <rect x="236" y="52" width="30" height="136" rx="6" fill="url(#brand)" opacity="0.85"/>
+    <circle cx="251" cy="74" r="4" fill="#0d1117"/>
+    <rect x="282" y="86" width="30" height="102" rx="6" fill="url(#brand)" opacity="0.55"/>
+    <rect x="328" y="118" width="30" height="70" rx="6" fill="url(#brand)" opacity="0.3"/>
+  </g>
+
+  <text x="408" y="150" font-family="Segoe UI, sans-serif" font-size="62" font-weight="700" fill="#ffffff" filter="url(#textGlow)">My<tspan fill="url(#brand)">Git</tspan></text>
+  <text x="412" y="198" font-family="Segoe UI, sans-serif" font-size="23" fill="#8b949e">Self-hosted Git platform — a GitLab / Gitea alternative in Go</text>
+
+  <g transform="translate(412,238)">
+    <rect x="0" y="0" width="112" height="34" rx="17" fill="#58a6ff" opacity="0.13" stroke="#58a6ff" stroke-width="1"/>
+    <text x="56" y="23" font-family="Segoe UI, sans-serif" font-size="16" font-weight="600" fill="#79c0ff" text-anchor="middle">Go 1.25</text>
+    <rect x="124" y="0" width="166" height="34" rx="17" fill="#3fb950" opacity="0.13" stroke="#3fb950" stroke-width="1"/>
+    <text x="207" y="23" font-family="Segoe UI, sans-serif" font-size="16" font-weight="600" fill="#7ee787" text-anchor="middle">Smart HTTP</text>
+    <rect x="302" y="0" width="156" height="34" rx="17" fill="#a371f7" opacity="0.14" stroke="#a371f7" stroke-width="1"/>
+    <text x="380" y="23" font-family="Segoe UI, sans-serif" font-size="16" font-weight="600" fill="#d2a8ff" text-anchor="middle">Vue 3 · Tailwind</text>
+    <rect x="470" y="0" width="160" height="34" rx="17" fill="#e3b341" opacity="0.13" stroke="#e3b341" stroke-width="1"/>
+    <text x="550" y="23" font-family="Segoe UI, sans-serif" font-size="16" font-weight="600" fill="#eac54f" text-anchor="middle">Issues · MRs</text>
+    <rect x="642" y="0" width="120" height="34" rx="17" fill="#f85149" opacity="0.13" stroke="#f85149" stroke-width="1"/>
+    <text x="702" y="23" font-family="Segoe UI, sans-serif" font-size="16" font-weight="600" fill="#ffa198" text-anchor="middle">SSH · PAT</text>
+  </g>
+
+  <g transform="translate(1008,52)">
+    <rect x="0" y="0" width="110" height="52" rx="12" fill="#58a6ff" opacity="0.13" stroke="#58a6ff" stroke-width="2"/>
+    <text x="55" y="21" font-family="Segoe UI, sans-serif" font-size="18" font-weight="800" fill="#79c0ff" text-anchor="middle">3</text>
+    <text x="55" y="42" font-family="Segoe UI, sans-serif" font-size="12" fill="#8b949e" text-anchor="middle">репозиторії</text>
+  </g>
+  <g transform="translate(1134,52)">
+    <rect x="0" y="0" width="110" height="52" rx="12" fill="#3fb950" opacity="0.13" stroke="#3fb950" stroke-width="2"/>
+    <text x="55" y="21" font-family="Segoe UI, sans-serif" font-size="18" font-weight="800" fill="#7ee787" text-anchor="middle">2</text>
+    <text x="55" y="42" font-family="Segoe UI, sans-serif" font-size="12" fill="#8b949e" text-anchor="middle">гілки</text>
+  </g>
+  <g transform="translate(1008,116)">
+    <rect x="0" y="0" width="110" height="52" rx="12" fill="#e3b341" opacity="0.13" stroke="#e3b341" stroke-width="2"/>
+    <text x="55" y="21" font-family="Segoe UI, sans-serif" font-size="18" font-weight="800" fill="#eac54f" text-anchor="middle">3</text>
+    <text x="55" y="42" font-family="Segoe UI, sans-serif" font-size="12" fill="#8b949e" text-anchor="middle">open issues</text>
+  </g>
+  <g transform="translate(1134,116)">
+    <rect x="0" y="0" width="110" height="52" rx="12" fill="#a371f7" opacity="0.13" stroke="#a371f7" stroke-width="2"/>
+    <text x="55" y="21" font-family="Segoe UI, sans-serif" font-size="18" font-weight="800" fill="#d2a8ff" text-anchor="middle">1 MR</text>
+    <text x="55" y="42" font-family="Segoe UI, sans-serif" font-size="12" fill="#8b949e" text-anchor="middle">open</text>
+  </g>
+
+  <path d="M0 322 Q64 310 128 320 T256 320 T384 320 T512 320 T640 320 T768 320 T896 320 T1024 320 T1152 320 T1280 320" fill="none" stroke="url(#brand)" stroke-width="2" opacity="0.4"/>
+</svg>
