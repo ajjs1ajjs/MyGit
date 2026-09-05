@@ -21,6 +21,55 @@
 
 ---
 
+## 🍎 macOS / Apple Silicon
+
+MyGit має повну підтримку macOS, включаючи **Apple Silicon (M1/M2/M3/M4)** та **Intel Mac**:
+
+- **Нативні ARM64 бінарники** — оптимізовані для Apple Silicon
+- **Universal binary** — один бінарник працює на Intel та Apple Silicon
+- **macOS 12+ Monterey, 13 Ventura, 14 Sonoma, 15 Sequoia, 26 Tahoe**
+
+**Встановлення на macOS (Homebrew):**
+```bash
+# Через curl
+curl -sSL https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/install.sh | sudo bash
+
+# Архітектура визначається автоматично: aarch64-apple-darwin (M1+) або x86_64-apple-darwin (Intel)
+```
+
+**Запуск як сервіс (launchd):**
+```bash
+# Створіть ~/Library/LaunchAgents/com.mygit.server.plist
+cat > ~/Library/LaunchAgents/com.mygit.server.plist <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.mygit.server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/mygit/mygit</string>
+    <string>-port</string><string>8060</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict>
+</plist>
+EOF
+
+launchctl load ~/Library/LaunchAgents/com.mygit.server.plist
+```
+
+**Підтримувані архітектури macOS:**
+
+| Архітектура | Позначення | Підтримка |
+|---|---|---|
+| Apple Silicon (M1/M2/M3/M4) | `aarch64-apple-darwin` | ✅ Native |
+| Intel Mac | `x86_64-apple-darwin` | ✅ Native |
+| Universal | `universal-apple-darwin` | ✅ Fat binary |
+
+---
+
 ## 🖼️ Screenshots
 
 <p align="center">
