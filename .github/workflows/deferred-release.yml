@@ -1,0 +1,67 @@
+name: Deferred release (Oct 1)
+
+# Vidkladenyi reliz: zlyvaie holding-hilku v main i zapuskaie shtatnyi
+# version-bump reliz (release.yml, workflow_dispatch).
+# - Za rozkladom: 1 zhovtnia, 00:15 UTC (03:15 Kyiv), koly vidnovliatsia limity.
+# - Vruchnu: Actions -> Deferred release -> Run workflow (t reserved).
+# Zapuskai TILKY z main. Pislia uspishnoho relizu tsiei fail mozhna vydalyty.
+# Schedule pratsiuie lyshe na default-htiltsi (main), tomu tsei fail nabuvaie
+# chynnosti pislia merge PR chore/ubuntu-cleanup -> main.
+
+on:
+  schedule:
+    - cron: '15 0 1 10 *'
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Holding branch to merge into main'
+        required: true
+        default: 'chore/ubuntu-cleanup'
+      version:
+        description: 'Version bump type (peredaietsia v release.yml)'
+        required: true
+        type: choice
+        default: 'patch'
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  merge-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge holding branch
+        env:
+          BRANCH: ${{ github.event.inputs.branch || 'chore/ubuntu-cleanup' }}
+        run: |
+          git fetch origin "$BRANCH" || echo "branch $BRANCH not found, continuing with main only"
+          if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
+            if git merge-base --is-ancestor "origin/$BRANCH" HEAD; then
+              echo "Holding branch already merged, nothing to do."
+            else
+              git merge --no-edit "origin/$BRANCH"
+              git push origin HEAD:main
+            fi
+          fi
+          sleep 10
+
+      - name: Trigger version-bump release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUMP: ${{ github.event.inputs.version || 'patch' }}
+        run: gh workflow run release.yml --ref main -f version="$BUMP"
