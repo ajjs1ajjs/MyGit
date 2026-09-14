@@ -132,10 +132,10 @@ footer a{color:var(--accent);text-decoration:none}
 </div></nav>
 
 <header class="hero container">
-<div class="live"><span class="dot"></span> PRODUCTION READY &nbsp;•&nbsp; MIT LICENSE &nbsp;•&nbsp; v3.4.0</div>
+<div class="live"><span class="dot"></span> PRODUCTION READY &nbsp;•&nbsp; MIT LICENSE &nbsp;•&nbsp; v3.5.1</div>
 <h1>🔧 MyGit <span class='grad'>Platform</span></h1>
 <p class="tagline">Self-hosted Git-платформа — легка альтернатива GitLab/Gitea, переписана на Go. Ваша інфраструктура, ваші правила, нуль телеметрії.</p>
-<div class="badges"><span class='badge'>🪟 Windows</span><span class='badge'>🐧 Ubuntu</span><span class='badge'>🍎 macOS M1-M4</span><span class='badge'>🐹 Go 1.25</span><span class='badge'>📱 PWA</span></div>
+<div class="badges"><span class='badge'>🐧 Ubuntu</span><span class='badge'>🐹 Go 1.25</span><span class='badge'>📱 PWA</span></div>
 <div class="shields"><img src='https://img.shields.io/github/v/release/ajjs1ajjs/MyGit?label=release' alt='release' loading='lazy'><img src='https://img.shields.io/github/downloads/ajjs1ajjs/MyGit/total?label=downloads' alt='downloads' loading='lazy'><img src='https://img.shields.io/github/actions/workflow/status/ajjs1ajjs/MyGit/ci.yml?label=CI' alt='CI' loading='lazy'><img src='https://img.shields.io/badge/license-MIT-green' alt='MIT' loading='lazy'></div>
 <div class="cta">
 <a class="btn btn-primary" href="#install">🚀 Швидкий старт</a>
@@ -147,24 +147,24 @@ footer a{color:var(--accent);text-decoration:none}
 
 <main class="container">
 <section id="features"><div class="sec-head reveal"><h2>Потужні <span class="u">можливості</span></h2><p>Репозиторії, код-рев'ю, задачі та історія — все для команди в одному бінарнику.</p></div>
-<div class="features"><div class='feature reveal'><div class='ic'>📦</div><h3>Git-репозиторії</h3><p>Створення та керування репозиторіями з швидким веб-інтерфейсом.</p></div><div class='feature reveal'><div class='ic'>🔀</div><h3>Merge Requests</h3><p>Code review з дифами, коментарями та апрувами прямо в браузері.</p></div><div class='feature reveal'><div class='ic'>🐛</div><h3>Issues</h3><p>Задачі, баги, мітки та майлстоуни для всієї команди.</p></div><div class='feature reveal'><div class='ic'>📊</div><h3>Коміти та статистика</h3><p>Історія, графи внеску, blame та пошук по коду.</p></div><div class='feature reveal'><div class='ic'>🔐</div><h3>Доступ та безпека</h3><p>Користувачі, команди, SSH-ключі, токени API, захист гілок.</p></div><div class='feature reveal'><div class='ic'>⚡</div><h3>Один бінарник</h3><p>Go-моноліт без залежностей. Systemd / launchd / Windows Service.</p></div></div></section>
+<div class="features"><div class='feature reveal'><div class='ic'>📦</div><h3>Git-репозиторії</h3><p>Створення та керування репозиторіями з швидким веб-інтерфейсом.</p></div><div class='feature reveal'><div class='ic'>🔀</div><h3>Merge Requests</h3><p>Code review з дифами, коментарями та апрувами прямо в браузері.</p></div><div class='feature reveal'><div class='ic'>🐛</div><h3>Issues</h3><p>Задачі, баги, мітки та майлстоуни для всієї команди.</p></div><div class='feature reveal'><div class='ic'>📊</div><h3>Коміти та статистика</h3><p>Історія, графи внеску, blame та пошук по коду.</p></div><div class='feature reveal'><div class='ic'>🔐</div><h3>Доступ та безпека</h3><p>Користувачі, команди, SSH-ключі, токени API, захист гілок.</p></div><div class='feature reveal'><div class='ic'>⚡</div><h3>Один бінарник</h3><p>Go-моноліт без залежностей. Systemd.</p></div></div></section>
 
-<section id="install"><div class="sec-head reveal"><h2>Встановлення за <span class="u">30 секунд</span></h2><p>Одна команда — і все працює. Оберіть свою ОС:</p></div>
+<section id="install"><div class="sec-head reveal"><h2>Встановлення за <span class="u">30 секунд</span></h2><p>Одна команда — і все працює на Ubuntu:</p></div>
 <div class="install reveal">
-<div class="tabs"><button class='active' onclick="tab(this,'linux')">🐧 Linux</button><button onclick="tab(this,'win')">🪟 Windows</button><button onclick="tab(this,'mac')">🍎 macOS</button></div>
+<div class="tabs"><button class='active'>🐧 Ubuntu</button></div>
 <div class="term"><code id="cmd">curl -sSL https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/install.sh | sudo bash</code><button class="copy" onclick="copyCmd()">📋 Копіювати</button></div>
 </div>
-<p class="hint">💡 На Linux/macOS потрібен sudo • На Windows — PowerShell від імені адміністратора</p>
+<p class="hint">💡 Потрібен sudo</p>
 <div class="steps" style="margin-top:26px"><div class='step reveal'><div class='n'>1</div><b>Встановіть сервер</b><p>Порт 8060 за замовчуванням</p></div><div class='step reveal'><div class='n'>2</div><b>Створіть користувача</b><p>Перший юзер — адміністратор</p></div><div class='step reveal'><div class='n'>3</div><b>Пуште перший репо</b><p>git remote add mygit ... && git push</p></div></div>
 </section>
 
 <section id="screenshots"><div class="sec-head reveal"><h2>Живий <span class="u">інтерфейс</span></h2><p>Реальні скріншоти продукту — натисніть щоб збільшити</p></div>
 <div class="gallery"><div class='shot reveal'><div class='imgwrap'><img src='https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/docs/screenshots/home.png' alt='Home'></div><h3>🏠 Home</h3><p>Стрічка та огляд проектів</p></div><div class='shot reveal'><div class='imgwrap'><img src='https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/docs/screenshots/repo.png' alt='Repository'></div><h3>📦 Repository</h3><p>Файли, гілки та README</p></div><div class='shot reveal'><div class='imgwrap'><img src='https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/docs/screenshots/commits.png' alt='Commits'></div><h3>📝 Commits</h3><p>Історія комітів</p></div><div class='shot reveal'><div class='imgwrap'><img src='https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/docs/screenshots/merge_requests.png' alt='Merge Requests'></div><h3>🔀 Merge Requests</h3><p>Рев'ю та мерджі</p></div><div class='shot reveal'><div class='imgwrap'><img src='https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/docs/screenshots/issues.png' alt='Issues'></div><h3>🐛 Issues</h3><p>Задачі команди</p></div><div class='shot reveal'><div class='imgwrap'><img src='https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/docs/screenshots/login.png' alt='Login'></div><h3>🔑 Login</h3><p>Вхід та реєстрація</p></div></div></section>
 
-<section id="platforms"><div class="sec-head reveal"><h2>Працює <span class="u">скрізь</span></h2><p>Нативні збірки під кожну платформу</p></div>
-<div class="os-grid"><div class='os-card reveal'><div class='oi'>🪟</div><b>Windows</b><span>Server 2022 / 2025</span></div><div class='os-card reveal'><div class='oi'>🐧</div><b>Ubuntu</b><span>24 / 25 / 26 LTS</span></div><div class='os-card reveal'><div class='oi'>🍎</div><b>macOS</b><span>Intel + Apple Silicon</span></div></div></section>
+<section id="platforms"><div class="sec-head reveal"><h2>Працює на <span class="u">Ubuntu</span></h2><p>Нативні статичні збірки amd64/arm64</p></div>
+<div class="os-grid"><div class='os-card reveal'><div class='oi'>🐧</div><b>Ubuntu</b><span>24 / 25 / 26</span></div></div></section>
 
-<section id="download"><div class="sec-head reveal"><h2>Завантажити <span class="u">MyGit</span></h2><p>Останній реліз з бінарниками під всі ОС</p></div><div style="text-align:center"><a class="btn btn-primary" href="https://github.com/ajjs1ajjs/MyGit/releases/latest">⬇️ Завантажити останній реліз</a> <a class="btn btn-ghost" href="https://github.com/ajjs1ajjs/MyGit/releases">📋 Всі релізи</a></div></section>
+<section id="download"><div class="sec-head reveal"><h2>Завантажити <span class="u">MyGit</span></h2><p>Останній реліз з бінарниками для Ubuntu (amd64/arm64)</p></div><div style="text-align:center"><a class="btn btn-primary" href="https://github.com/ajjs1ajjs/MyGit/releases/latest">⬇️ Завантажити останній реліз</a> <a class="btn btn-ghost" href="https://github.com/ajjs1ajjs/MyGit/releases">📋 Всі релізи</a></div></section>
 
 <div class="cta-big reveal">
 <h2>Свій GitHub за 5 хвилин</h2>
@@ -182,8 +182,8 @@ footer a{color:var(--accent);text-decoration:none}
 <div id="lightbox" onclick="this.classList.remove('open')"><div><img id="lbImg" src="" alt=""><div class="cap" id="lbCap"></div></div></div>
 <button id="toTop" onclick="scrollTo({top:0,behavior:'smooth'})" aria-label="top">↑</button>
 <script>
-const CMDS={linux:'curl -sSL https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/install.sh | sudo bash',win:'irm https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/install.ps1 | iex',mac:'curl -sSL https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/install.sh | sudo bash'};
-function tab(el,os){document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('active'));el.classList.add('active');document.getElementById('cmd').textContent=CMDS[os];}
+
+
 function copyCmd(){const t=document.getElementById('cmd').textContent;navigator.clipboard.writeText(t).then(()=>{const b=document.querySelector('.copy');const o=b.textContent;b.textContent='✅ Скопійовано!';setTimeout(()=>b.textContent=o,1800);});}
 const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('vis');io.unobserve(e.target);}}),{threshold:.12});
 document.querySelectorAll('.reveal').forEach(el=>io.observe(el));

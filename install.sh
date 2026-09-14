@@ -39,8 +39,8 @@ fi
 # --- OS version check -------------------------------------------------------
 if [ -f /etc/os-release ]; then
     . /etc/os-release
-    if [ "$ID" != "ubuntu" ] && [ "$ID" != "debian" ]; then
-        echo "ERROR: This installer supports Ubuntu and Debian only. Detected: $ID"
+    if [ "$ID" != "ubuntu" ]; then
+        echo "ERROR: This installer supports Ubuntu only. Detected: $ID"
         exit 1
     fi
     ver="${VERSION_ID%%.*}"
@@ -53,7 +53,7 @@ if [ -f /etc/os-release ]; then
         fi
     done
     if [ "$is_supported" -eq 0 ]; then
-        echo "ERROR: Unsupported $ID version: $VERSION_ID. Supported: Ubuntu/Debian 24, 25, 26 (latest and preview)."
+        echo "ERROR: Unsupported $ID version: $VERSION_ID. Supported: Ubuntu 24, 25, 26."
         exit 1
     fi
     echo "[OK] Detected $ID $VERSION_ID ($PRETTY_NAME) — supported."
@@ -193,7 +193,8 @@ done
 echo "[4/4] Done."
 echo ""
 if [ "$IS_UPDATE" = "1" ]; then
-    echo "MyGit updated: ${OLD_VERSION} -> ${NEW_VERSION:-$MYGIT_VER}"
+    NEW_VERSION="$("$INSTALL_DIR/mygit" --version 2>/dev/null || echo "$MYGIT_VER")"
+    echo "MyGit updated: ${OLD_VERSION} -> ${NEW_VERSION}"
     echo "Config, repositories and users preserved."
 else
     echo "MyGit installed. Version: ${MYGIT_VER}"

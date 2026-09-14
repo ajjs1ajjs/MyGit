@@ -1,3 +1,11 @@
+## [Unreleased]
+
+### 🧹 Прибрано зайве (platform cleanup)
+
+- **Лише Ubuntu Linux**: видалено `install.ps1` (Windows-інсталятор), Windows/macOS-білди з `release.yml` та відповідні вкладки з `index.html`. Тепер встановлення/розгортання підтримується лише на Ubuntu через `install.sh`.
+- Документація (`README.md`, `index.html`) оновлена: прибрані розділи встановлення для Windows та macOS, залишено лише Ubuntu.
+- `install.sh`: видалена підтримка Debian, тепер перевіряється лише `ubuntu` у `/etc/os-release`.
+
 ## [3.5.1] - 2026-09-09
 
 ### Changed

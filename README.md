@@ -10,63 +10,14 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ajjs1ajjs/MyGit/ci.yml?label=CI)](https://github.com/ajjs1ajjs/MyGit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-3.4.0-orange.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-3.5.1-orange.svg)](CHANGELOG.md)
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-blue.svg)](https://go.dev)
-![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-blue.svg)
+![Platform](https://img.shields.io/badge/Platform-Ubuntu%20Linux-blue.svg)
 ![PWA](https://img.shields.io/badge/PWA-offline-cyan)
 
 [**🌐 Live Site**](https://ajjs1ajjs.github.io/MyGit/) · [Releases](https://github.com/ajjs1ajjs/MyGit/releases) · [Actions](https://github.com/ajjs1ajjs/MyGit/actions)
 
 </div>
-
----
-
-## 🍎 macOS / Apple Silicon
-
-MyGit має повну підтримку macOS, включаючи **Apple Silicon (M1/M2/M3/M4)** та **Intel Mac**:
-
-- **Нативні ARM64 бінарники** — оптимізовані для Apple Silicon
-- **Universal binary** — один бінарник працює на Intel та Apple Silicon
-- **macOS 12+ Monterey, 13 Ventura, 14 Sonoma, 15 Sequoia, 26 Tahoe**
-
-**Встановлення на macOS (Homebrew):**
-```bash
-# Через curl
-curl -sSL https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/install.sh | sudo bash
-
-# Архітектура визначається автоматично: aarch64-apple-darwin (M1+) або x86_64-apple-darwin (Intel)
-```
-
-**Запуск як сервіс (launchd):**
-```bash
-# Створіть ~/Library/LaunchAgents/com.mygit.server.plist
-cat > ~/Library/LaunchAgents/com.mygit.server.plist <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.mygit.server</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/opt/mygit/mygit</string>
-    <string>-port</string><string>8060</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-</dict>
-</plist>
-EOF
-
-launchctl load ~/Library/LaunchAgents/com.mygit.server.plist
-```
-
-**Підтримувані архітектури macOS:**
-
-| Архітектура | Позначення | Підтримка |
-|---|---|---|
-| Apple Silicon (M1/M2/M3/M4) | `aarch64-apple-darwin` | ✅ Native |
-| Intel Mac | `x86_64-apple-darwin` | ✅ Native |
-| Universal | `universal-apple-darwin` | ✅ Fat binary |
 
 ---
 
@@ -98,24 +49,16 @@ launchctl load ~/Library/LaunchAgents/com.mygit.server.plist
 - **Права**: superuser / рольові (owner 50, maintainer 40, developer 30, reporter 20, guest 10)
 - **SPA-фронтенд**: Vue 3 + Tailwind (embedded через `go:embed`)
 - **SSH git**: AuthorizedKeysCommand + internal API (Linux, через системний OpenSSH)
-- **Платформа**: Linux (amd64/arm64) та Windows (amd64/arm64) — статичні бінарники
+- **Платформа**: Ubuntu Linux (amd64/arm64) — статичні бінарники
 
 ---
 
 ## 🚀 Швидкий старт
 
-**Ubuntu / Debian** (одна команда і встановлює, і оновлює):
+**Ubuntu** (одна команда і встановлює, і оновлює):
 ```bash
 curl -sSL https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/install.sh | sudo bash
 ```
-
-**Windows 10/11 / Server 2016+** (PowerShell, від імені Administrator; та ж команда встановлює і оновлює):
-```powershell
-irm https://raw.githubusercontent.com/ajjs1ajjs/MyGit/main/install.ps1 | iex
-```
-Потрібен встановлений Git for Windows (`winget install Git.Git`) — MyGit викликає системний `git` для smart HTTP. Інсталятор реєструє MyGit як Windows Service (`mygit`, автозапуск, авто-перезапуск при збої), дані зберігаються в `%ProgramData%\mygit`, бінарник — у `%ProgramFiles%\mygit`.
-
-> **Обмеження:** git-over-HTTP(S) працює повністю на обох платформах. **SSH-git** (`AuthorizedKeysCommand`) залежить від системного OpenSSH-сервера з підтримкою `AuthorizedKeysCommand`, який на Linux (Ubuntu/Debian, `openssh-server`) налаштовується типово. На Windows Win32-OpenSSH теоретично підтримує `AuthorizedKeysCommand`, але це не входить у стандартний `install.ps1` і потребує додаткового ручного налаштування `sshd_config` — тому SSH-git на Windows наразі **не підтримується "з коробки"**; використовуйте git-over-HTTP(S).
 
 Після запуску відкрийте `http://<IP>:8060/` та **зареєструйте перший обліковий запис** — він стане власником (superuser).
 
