@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -247,6 +248,79 @@ func (a *App) handleGetMR(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, mr)
 }
 
+// --- merge request reviews (approvals) ---
+
+func (a *App) handleListReviews(w http.ResponseWriter, r *http.Request) {
+	repo := a.requireRepoAccess(w, r)
+	if repo == nil {
+		return
+	}
+	num := int(mustPathInt(r, "number"))
+	mr, err := a.Store.GetMR(repo.ID, num)
+	if err != nil || mr == nil {
+		writeErr(w, http.StatusNotFound, "Merge request not found")
+		return
+	}
+	reviews, err := a.Store.ListReviews(mr.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	for i := range reviews {
+		reviews[i].AuthorUsername = usernameOf(a.Store, reviews[i].AuthorID)
+	}
+	writeJSON(w, http.StatusOK, reviews)
+}
+
+func (a *App) handleSubmitReview(w http.ResponseWriter, r *http.Request) {
+	repo := a.requireRepoAccess(w, r)
+	if repo == nil {
+		return
+	}
+	num := int(mustPathInt(r, "number"))
+	mr, err := a.Store.GetMR(repo.ID, num)
+	if err != nil || mr == nil {
+		writeErr(w, http.StatusNotFound, "Merge request not found")
+		return
+	}
+	if mr.State != "open" {
+		writeErr(w, http.StatusConflict, "Merge request is not open")
+		return
+	}
+	p := a.principal(r)
+	if a.Store.EffectiveRole(p.UserID, repo.ID, repo.OwnerID, p.IsSuper, repo.Visibility) < 30 && !p.IsSuper {
+		writeErr(w, http.StatusForbidden, "Writer access required")
+		return
+	}
+	if mr.AuthorID == p.UserID {
+		writeErr(w, http.StatusBadRequest, "Authors cannot review their own merge request")
+		return
+	}
+	var body struct {
+		State string `json:"state"`
+		Body  string `json:"body"`
+	}
+	if err := jsonDecode(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	switch body.State {
+	case "approved", "changes_requested", "commented":
+	default:
+		writeErr(w, http.StatusBadRequest, "state must be approved, changes_requested or commented")
+		return
+	}
+	if len(body.Body) > 10000 {
+		writeErr(w, http.StatusBadRequest, "body too long")
+		return
+	}
+	if err := a.Store.UpsertReview(mr.ID, p.UserID, body.State, body.Body); err != nil {
+		writeErr(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"detail": "review recorded"})
+}
+
 func (a *App) handleListMRComments(w http.ResponseWriter, r *http.Request) {
 	repo := a.requireRepoAccess(w, r)
 	if repo == nil {
@@ -397,6 +471,74 @@ func (a *App) handleUpdateWiki(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"slug": slug})
 }
 
+// --- protected branches (maintainers) ---
+
+func (a *App) handleListProtected(w http.ResponseWriter, r *http.Request) {
+	repo := a.requireRepoAccess(w, r)
+	if repo == nil {
+		return
+	}
+	rules, err := a.Store.ListProtectedBranches(repo.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	writeJSON(w, http.StatusOK, rules)
+}
+
+func (a *App) handleUpsertProtected(w http.ResponseWriter, r *http.Request) {
+	repo := a.requireRepoAccess(w, r)
+	if repo == nil {
+		return
+	}
+	p := a.principal(r)
+	if a.Store.EffectiveRole(p.UserID, repo.ID, repo.OwnerID, p.IsSuper, repo.Visibility) < 40 && !p.IsSuper {
+		writeErr(w, http.StatusForbidden, "Maintainer access required")
+		return
+	}
+	var body struct {
+		Pattern            string `json:"pattern"`
+		RequiredApprovals  int    `json:"required_approvals"`
+	}
+	if err := jsonDecode(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	body.Pattern = strings.TrimSpace(body.Pattern)
+	if body.Pattern == "" || len(body.Pattern) > 100 {
+		writeErr(w, http.StatusBadRequest, "pattern is required (max 100 chars)")
+		return
+	}
+	rule, err := a.Store.UpsertProtectedBranch(repo.ID, body.Pattern, body.RequiredApprovals)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	writeJSON(w, http.StatusOK, rule)
+}
+
+func (a *App) handleDeleteProtected(w http.ResponseWriter, r *http.Request) {
+	repo := a.requireRepoAccess(w, r)
+	if repo == nil {
+		return
+	}
+	p := a.principal(r)
+	if a.Store.EffectiveRole(p.UserID, repo.ID, repo.OwnerID, p.IsSuper, repo.Visibility) < 40 && !p.IsSuper {
+		writeErr(w, http.StatusForbidden, "Maintainer access required")
+		return
+	}
+	pattern := r.URL.Query().Get("pattern")
+	if pattern == "" {
+		writeErr(w, http.StatusBadRequest, "pattern query is required")
+		return
+	}
+	if err := a.Store.DeleteProtectedBranch(repo.ID, pattern); err != nil {
+		writeErr(w, http.StatusInternalServerError, "Database error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"detail": "deleted"})
+}
+
 // usernameOf resolves a user ID to a username, returning "" when unknown.
 func usernameOf(store *storage.Store, userID int64) string {
 	if userID <= 0 {
@@ -429,6 +571,20 @@ func (a *App) handleMergeMR(w http.ResponseWriter, r *http.Request) {
 	if mr.State != "open" {
 		writeErr(w, http.StatusConflict, "Merge request is not open")
 		return
+	}
+	// Protected-branch gate: the target branch may require N approvals from
+	// non-authors. Previously required_approvals sat in the schema unused and
+	// every MR merged with zero reviews.
+	if need, err := a.Store.RequiredApprovals(repo.ID, mr.TargetBranch); err == nil && need > 0 {
+		got, err := a.Store.ApprovalCount(mr.ID, mr.AuthorID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "Database error")
+			return
+		}
+		if got < need {
+			writeErr(w, http.StatusForbidden, fmt.Sprintf("Target branch requires %d approval(s), got %d", need, got))
+			return
+		}
 	}
 	var body struct {
 		Method string `json:"method"`

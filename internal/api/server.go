@@ -169,6 +169,11 @@ func (a *App) Handler() http.Handler {
 		r.With(a.withAuth).Post("/{id}/merge_requests/{number}/merge/", a.handleMergeMR)
 		r.With(a.withAuth).Get("/{id}/merge_requests/{number}/comments/", a.handleListMRComments)
 		r.With(a.withAuth).Post("/{id}/merge_requests/{number}/comments/", a.handleAddMRComment)
+		r.With(a.withAuth).Get("/{id}/merge_requests/{number}/reviews/", a.handleListReviews)
+		r.With(a.withAuth).Post("/{id}/merge_requests/{number}/reviews/", a.handleSubmitReview)
+		r.With(a.withAuth).Get("/{id}/protected-branches/", a.handleListProtected)
+		r.With(a.withAuth).Post("/{id}/protected-branches/", a.handleUpsertProtected)
+		r.With(a.withAuth).Delete("/{id}/protected-branches/", a.handleDeleteProtected)
 		r.With(a.withAuth).Get("/{id}/merge_requests/{number}/diff/", a.handleMRDiff)
 		r.With(a.withAuth).Get("/{id}/hooks/", a.handleListWebhooks)
 		r.With(a.withAuth).Post("/{id}/hooks/", a.handleCreateWebhook)
@@ -176,11 +181,29 @@ func (a *App) Handler() http.Handler {
 		r.With(a.withAuth).Get("/{id}/wiki/", a.handleListWiki)
 		r.With(a.withAuth).Post("/{id}/wiki/", a.handleCreateWiki)
 		r.With(a.withAuth).Put("/{id}/wiki/{slug}/", a.handleUpdateWiki)
+		r.With(a.withAuth).Get("/{id}/environments/", a.handleListEnvironments)
+		r.With(a.withAuth).Post("/{id}/environments/", a.handleCreateEnvironment)
+		r.With(a.withAuth).Delete("/{id}/environments/", a.handleDeleteEnvironment)
+		r.With(a.withAuth).Get("/{id}/environments/vars/", a.handleListEnvVars)
+		r.With(a.withAuth).Post("/{id}/environments/vars/", a.handleSetEnvVar)
+		r.With(a.withAuth).Get("/{id}/environments/deployments/", a.handleListDeployments)
+		r.With(a.withAuth).Post("/{id}/environments/deployments/", a.handleCreateDeployment)
+		r.With(a.withAuth).Post("/{id}/environments/deployments/{depID}/finish/", a.handleFinishDeployment)
+		r.With(a.withAuth).Get("/{id}/packages/", a.handleListPackages)
+		r.With(a.withAuth).Post("/{id}/packages/publish/", a.handlePublishPackage)
+		r.With(a.withAuth).Get("/{id}/packages/files/", a.handleListPackageFiles)
+		r.With(a.withAuth).Get("/{id}/packages/download/", a.handleDownloadPackageFile)
+		r.With(a.withAuth).Delete("/{id}/packages/files/", a.handleDeletePackageFile)
 	})
 
 	// notifications / search
 	r.With(a.withAuth).Get("/api/v1/notifications/", a.handleNotifications)
 	r.With(a.withAuth).Get("/api/v1/search/", a.handleSearch)
+
+	// Pages: static hosting straight from git objects (own visibility gate
+	// inside the handler). Registered before the SPA fallback so /-/pages/*
+	// never resolves to index.html.
+	r.Get("/-/pages/{owner}/{repo}/*", a.handlePages)
 
 	// SPA (Vue history mode): /assets/* and index.html fallback.
 	// FileServer must be rooted at the "web/assets" subdirectory; StripPrefix

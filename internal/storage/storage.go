@@ -48,6 +48,52 @@ CREATE TABLE IF NOT EXISTS revoked_tokens (
   exp INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_revoked_exp ON revoked_tokens(exp);
+CREATE TABLE IF NOT EXISTS environments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repository_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  created_at TEXT,
+  UNIQUE(repository_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_env_repo ON environments(repository_id);
+CREATE TABLE IF NOT EXISTS env_vars (
+  environment_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  value TEXT NOT NULL DEFAULT '',
+  secret INTEGER DEFAULT 0,
+  PRIMARY KEY (environment_id, name)
+);
+CREATE TABLE IF NOT EXISTS deployments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  environment_id INTEGER NOT NULL,
+  repository_id INTEGER NOT NULL,
+  ref TEXT NOT NULL DEFAULT '',
+  sha TEXT NOT NULL DEFAULT '',
+  status TEXT DEFAULT 'pending',
+  log TEXT DEFAULT '',
+  created_at TEXT, finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_deploy_env ON deployments(environment_id);
+CREATE TABLE IF NOT EXISTS packages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repository_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  ptype TEXT NOT NULL DEFAULT 'generic',
+  created_at TEXT,
+  UNIQUE(repository_id, ptype, name)
+);
+CREATE INDEX IF NOT EXISTS idx_pkg_repo ON packages(repository_id);
+CREATE TABLE IF NOT EXISTS package_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  package_id INTEGER NOT NULL,
+  version TEXT NOT NULL DEFAULT '',
+  filename TEXT NOT NULL DEFAULT '',
+  size_bytes INTEGER DEFAULT 0,
+  sha256 TEXT NOT NULL DEFAULT '',
+  created_at TEXT,
+  UNIQUE(package_id, version, filename)
+);
+CREATE INDEX IF NOT EXISTS idx_pkgfile_pkg ON package_files(package_id);
 CREATE TABLE IF NOT EXISTS runners (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -101,6 +147,16 @@ CREATE TABLE IF NOT EXISTS protected_branches (
   allow_delete INTEGER DEFAULT 0,
   UNIQUE(repository_id, pattern)
 );
+CREATE TABLE IF NOT EXISTS mr_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mr_id INTEGER NOT NULL,
+  author_id INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'commented',
+  body TEXT DEFAULT '',
+  created_at TEXT,
+  UNIQUE(mr_id, author_id)
+);
+CREATE INDEX IF NOT EXISTS idx_reviews_mr ON mr_reviews(mr_id);
 CREATE TABLE IF NOT EXISTS issues (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   repository_id INTEGER NOT NULL,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path"
 	"strings"
 )
 
@@ -589,6 +590,7 @@ func (st *Store) DeleteRepo(id int64) error {
 		`DELETE FROM milestones WHERE repository_id = ?`,
 		`DELETE FROM issues WHERE repository_id = ?`,
 		`DELETE FROM mr_comments WHERE merge_request_id IN (SELECT id FROM merge_requests WHERE repository_id = ?)`,
+		`DELETE FROM mr_reviews WHERE mr_id IN (SELECT id FROM merge_requests WHERE repository_id = ?)`,
 		`DELETE FROM merge_requests WHERE repository_id = ?`,
 		`DELETE FROM webhooks WHERE repository_id = ?`,
 		`DELETE FROM wiki_pages WHERE repository_id = ?`,
@@ -971,6 +973,264 @@ func (st *Store) UpdateMR(repoID int64, number int, fields map[string]any) error
 		return err
 	}
 	return genericUpdate(st.DB, "merge_requests", mr.ID, fields)
+}
+
+// --- merge request reviews (approvals) ---
+
+type MRReview struct {
+	ID             int64  `json:"id"`
+	MergeRequestID int64  `json:"merge_request_id"`
+	AuthorID       int64  `json:"author_id"`
+	AuthorUsername string `json:"author_username"`
+	State          string `json:"state"`
+	Body           string `json:"body"`
+	CreatedAt      string `json:"created_at"`
+}
+
+// UpsertReview records one reviewer's latest state (approved | changes_requested
+// | commented). Only writers (>=30) may review; enforced by callers.
+func (st *Store) UpsertReview(mrID, authorID int64, state, body string) error {
+	_, err := st.DB.Exec(`INSERT INTO mr_reviews (mr_id, author_id, state, body, created_at)
+	  VALUES (?,?,?,?,?) ON CONFLICT(mr_id, author_id)
+	  DO UPDATE SET state = excluded.state, body = excluded.body, created_at = excluded.created_at`,
+		mrID, authorID, state, body, Now())
+	return err
+}
+
+func (st *Store) ListReviews(mrID int64) ([]MRReview, error) {
+	rows, err := st.DB.Query(`SELECT id, mr_id, author_id, state, body, created_at
+	  FROM mr_reviews WHERE mr_id = ? ORDER BY id`, mrID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MRReview
+	for rows.Next() {
+		var r MRReview
+		if err := rows.Scan(&r.ID, &r.MergeRequestID, &r.AuthorID, &r.State, &r.Body, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ApprovalCount counts distinct non-author approvals (the author can never
+// approve their own MR, like GitHub).
+func (st *Store) ApprovalCount(mrID, authorID int64) (int, error) {
+	var n int
+	err := st.DB.QueryRow(`SELECT COUNT(DISTINCT author_id) FROM mr_reviews
+	  WHERE mr_id = ? AND state = 'approved' AND author_id != ?`, mrID, authorID).Scan(&n)
+	return n, err
+}
+
+// --- protected branches ---
+
+type ProtectedBranch struct {
+	ID                 int64  `json:"id"`
+	RepositoryID       int64  `json:"repository_id"`
+	Pattern            string `json:"pattern"`
+	RequiredApprovals  int    `json:"required_approvals"`
+	AllowDirectPush    int    `json:"allow_direct_push"`
+	AllowForcePush     int    `json:"allow_force_push"`
+	AllowDelete        int    `json:"allow_delete"`
+}
+
+func (st *Store) ListProtectedBranches(repoID int64) ([]ProtectedBranch, error) {
+	rows, err := st.DB.Query(`SELECT id, repository_id, pattern, required_approvals,
+	  allow_direct_push, allow_force_push, allow_delete FROM protected_branches
+	  WHERE repository_id = ? ORDER BY pattern`, repoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ProtectedBranch
+	for rows.Next() {
+		var b ProtectedBranch
+		if err := rows.Scan(&b.ID, &b.RepositoryID, &b.Pattern, &b.RequiredApprovals,
+			&b.AllowDirectPush, &b.AllowForcePush, &b.AllowDelete); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+func (st *Store) UpsertProtectedBranch(repoID int64, pattern string, required int) (*ProtectedBranch, error) {
+	if required < 0 {
+		required = 0
+	}
+	if required > 10 {
+		required = 10
+	}
+	_, err := st.DB.Exec(`INSERT INTO protected_branches (repository_id, pattern, required_approvals)
+	  VALUES (?,?,?) ON CONFLICT(repository_id, pattern)
+	  DO UPDATE SET required_approvals = excluded.required_approvals`,
+		repoID, pattern, required)
+	if err != nil {
+		return nil, err
+	}
+	var b ProtectedBranch
+	err = st.DB.QueryRow(`SELECT id, repository_id, pattern, required_approvals,
+	  allow_direct_push, allow_force_push, allow_delete FROM protected_branches
+	  WHERE repository_id = ? AND pattern = ?`, repoID, pattern).Scan(
+		&b.ID, &b.RepositoryID, &b.Pattern, &b.RequiredApprovals,
+		&b.AllowDirectPush, &b.AllowForcePush, &b.AllowDelete)
+	if err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+func (st *Store) DeleteProtectedBranch(repoID int64, pattern string) error {
+	_, err := st.DB.Exec(`DELETE FROM protected_branches WHERE repository_id = ? AND pattern = ?`, repoID, pattern)
+	return err
+}
+
+// RequiredApprovals returns the highest required_approvals among rules whose
+// glob pattern matches the branch (0 = unprotected).
+func (st *Store) RequiredApprovals(repoID int64, branch string) (int, error) {
+	rules, err := st.ListProtectedBranches(repoID)
+	if err != nil {
+		return 0, err
+	}
+	best := 0
+	for _, r := range rules {
+		ok, merr := path.Match(r.Pattern, branch)
+		if merr != nil || !ok {
+			continue
+		}
+		if r.RequiredApprovals > best {
+			best = r.RequiredApprovals
+		}
+	}
+	return best, nil
+}
+
+// --- packages (generic file registry) ---
+
+type Package struct {
+	ID           int64  `json:"id"`
+	RepositoryID int64  `json:"repository_id"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	CreatedAt    string `json:"created_at"`
+}
+
+type PackageFile struct {
+	ID        int64  `json:"id"`
+	PackageID int64  `json:"package_id"`
+	Version   string `json:"version"`
+	Filename  string `json:"filename"`
+	SizeBytes int64  `json:"size_bytes"`
+	SHA256    string `json:"sha256"`
+	CreatedAt string `json:"created_at"`
+}
+
+var packageTypes = map[string]bool{"generic": true, "npm": true, "docker": true, "maven": true, "pypi": true}
+
+func validPackageName(s string) bool {
+	if s == "" || len(s) > 200 {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9':
+		case c == '_' || c == '-' || c == '.' || c == '/' || c == '@':
+		default:
+			return false
+		}
+	}
+	if strings.Contains(s, "..") {
+		return false
+	}
+	return true
+}
+
+func (st *Store) UpsertPackage(repoID int64, name, ptype string) (int64, error) {
+	if !validPackageName(name) || !packageTypes[ptype] {
+		return 0, fmt.Errorf("invalid package name or type")
+	}
+	_, err := st.DB.Exec(`INSERT INTO packages (repository_id, name, ptype, created_at)
+	  VALUES (?,?,?,?) ON CONFLICT(repository_id, ptype, name) DO NOTHING`,
+		repoID, name, ptype, Now())
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	err = st.DB.QueryRow(`SELECT id FROM packages WHERE repository_id = ? AND ptype = ? AND name = ?`,
+		repoID, ptype, name).Scan(&id)
+	return id, err
+}
+
+func (st *Store) ListPackages(repoID int64) ([]Package, error) {
+	rows, err := st.DB.Query(`SELECT id, repository_id, name, ptype, created_at FROM packages
+	  WHERE repository_id = ? ORDER BY name`, repoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Package
+	for rows.Next() {
+		var p Package
+		if err := rows.Scan(&p.ID, &p.RepositoryID, &p.Name, &p.Type, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (st *Store) AddPackageFile(pkgID int64, version, filename string, size int64, sha string) (int64, error) {
+	if len(version) > 100 || len(filename) > 200 || strings.Contains(filename, "/") || strings.Contains(filename, "\\") {
+		return 0, fmt.Errorf("invalid version or filename")
+	}
+	res, err := st.DB.Exec(`INSERT INTO package_files (package_id, version, filename, size_bytes, sha256, created_at)
+	  VALUES (?,?,?,?,?,?) ON CONFLICT(package_id, version, filename)
+	  DO UPDATE SET size_bytes = excluded.size_bytes, sha256 = excluded.sha256, created_at = excluded.created_at`,
+		pkgID, version, filename, size, sha, Now())
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (st *Store) ListPackageFiles(pkgID int64) ([]PackageFile, error) {
+	rows, err := st.DB.Query(`SELECT id, package_id, version, filename, size_bytes, sha256, created_at
+	  FROM package_files WHERE package_id = ? ORDER BY version, filename`, pkgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PackageFile
+	for rows.Next() {
+		var f PackageFile
+		if err := rows.Scan(&f.ID, &f.PackageID, &f.Version, &f.Filename, &f.SizeBytes, &f.SHA256, &f.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+func (st *Store) GetPackageFile(pkgID int64, version, filename string) (*PackageFile, error) {
+	var f PackageFile
+	err := st.DB.QueryRow(`SELECT id, package_id, version, filename, size_bytes, sha256, created_at
+	  FROM package_files WHERE package_id = ? AND version = ? AND filename = ?`,
+		pkgID, version, filename).Scan(
+		&f.ID, &f.PackageID, &f.Version, &f.Filename, &f.SizeBytes, &f.SHA256, &f.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &f, err
+}
+
+func (st *Store) DeletePackageFile(pkgID int64, version, filename string) error {
+	_, err := st.DB.Exec(`DELETE FROM package_files WHERE package_id = ? AND version = ? AND filename = ?`,
+		pkgID, version, filename)
+	return err
 }
 
 // --- merge request comments ---
@@ -1496,6 +1756,224 @@ func (st *Store) ListImportJobs() ([]ImportJob, error) {
 			return nil, err
 		}
 		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// --- environments / deployments ---
+
+type Environment struct {
+	ID           int64  `json:"id"`
+	RepositoryID int64  `json:"repository_id"`
+	Name         string `json:"name"`
+	CreatedAt    string `json:"created_at"`
+}
+
+type EnvVar struct {
+	Name   string `json:"name"`
+	Secret int    `json:"secret"`
+	// Value is only returned on write responses for non-secrets; secrets
+	// are write-only (masked on read).
+	Value string `json:"value,omitempty"`
+}
+
+type Deployment struct {
+	ID           int64  `json:"id"`
+	EnvironmentID int64 `json:"environment_id"`
+	RepositoryID int64  `json:"repository_id"`
+	Ref          string `json:"ref"`
+	SHA          string `json:"sha"`
+	Status       string `json:"status"`
+	Log          string `json:"log"`
+	CreatedAt    string `json:"created_at"`
+	FinishedAt   string `json:"finished_at"`
+}
+
+func validEnvName(name string) bool {
+	if name == "" || len(name) > 64 {
+		return false
+	}
+	for _, c := range name {
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+		case c >= '0' && c <= '9':
+		case c == '_' || c == '-' || c == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (st *Store) CreateEnvironment(repoID int64, name string) (int64, error) {
+	if !validEnvName(name) {
+		return 0, fmt.Errorf("invalid environment name")
+	}
+	res, err := st.DB.Exec(`INSERT INTO environments (repository_id, name, created_at) VALUES (?,?,?)`,
+		repoID, name, Now())
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (st *Store) ListEnvironments(repoID int64) ([]Environment, error) {
+	rows, err := st.DB.Query(`SELECT id, repository_id, name, created_at FROM environments
+	  WHERE repository_id = ? ORDER BY name`, repoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Environment
+	for rows.Next() {
+		var e Environment
+		if err := rows.Scan(&e.ID, &e.RepositoryID, &e.Name, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (st *Store) GetEnvironment(repoID int64, name string) (*Environment, error) {
+	var e Environment
+	err := st.DB.QueryRow(`SELECT id, repository_id, name, created_at FROM environments
+	  WHERE repository_id = ? AND name = ?`, repoID, name).Scan(&e.ID, &e.RepositoryID, &e.Name, &e.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return &e, err
+}
+
+func (st *Store) DeleteEnvironment(repoID int64, name string) error {
+	var id int64
+	err := st.DB.QueryRow(`SELECT id FROM environments WHERE repository_id = ? AND name = ?`, repoID, name).Scan(&id)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	tx, err := st.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM env_vars WHERE environment_id = ?`,
+		`DELETE FROM deployments WHERE environment_id = ?`,
+		`DELETE FROM environments WHERE id = ?`,
+	} {
+		if _, err := tx.Exec(q, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// SetEnvVar stores one variable; secret values must already be encrypted by
+// the caller (see encryptEnvValue in the api package).
+func (st *Store) SetEnvVar(envID int64, name, value string, secret bool) error {
+	if !validEnvName(name) {
+		return fmt.Errorf("invalid variable name")
+	}
+	if len(value) > 65536 {
+		return fmt.Errorf("value too long")
+	}
+	s := 0
+	if secret {
+		s = 1
+	}
+	_, err := st.DB.Exec(`INSERT INTO env_vars (environment_id, name, value, secret) VALUES (?,?,?,?)
+	  ON CONFLICT(environment_id, name) DO UPDATE SET value = excluded.value, secret = excluded.secret`,
+		envID, name, value, s)
+	return err
+}
+
+func (st *Store) ListEnvVars(envID int64) ([]EnvVar, error) {
+	rows, err := st.DB.Query(`SELECT name, value, secret FROM env_vars WHERE environment_id = ? ORDER BY name`, envID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []EnvVar
+	for rows.Next() {
+		var v EnvVar
+		var val string
+		var secret int
+		if err := rows.Scan(&v.Name, &val, &secret); err != nil {
+			return nil, err
+		}
+		v.Secret = secret
+		// Secrets are write-only: masked on read, never echoed back.
+		if secret == 1 {
+			v.Value = "***"
+		} else {
+			v.Value = val
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (st *Store) GetEnvVarValue(envID int64, name string) (string, bool, error) {
+	var val string
+	var secret int
+	err := st.DB.QueryRow(`SELECT value, secret FROM env_vars WHERE environment_id = ? AND name = ?`,
+		envID, name).Scan(&val, &secret)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return val, secret == 1, nil
+}
+
+func (st *Store) CreateDeployment(repoID, envID int64, ref, sha string) (int64, error) {
+	if len(ref) > 200 || len(sha) > 100 {
+		return 0, fmt.Errorf("ref/sha too long")
+	}
+	res, err := st.DB.Exec(`INSERT INTO deployments (environment_id, repository_id, ref, sha, status, created_at)
+	  VALUES (?,?,?,?,'pending',?)`, envID, repoID, ref, sha, Now())
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (st *Store) FinishDeployment(id int64, status, log string) error {
+	if status != "success" && status != "failed" {
+		status = "failed"
+	}
+	if len(log) > 1<<20 {
+		log = log[:1<<20]
+	}
+	_, err := st.DB.Exec(`UPDATE deployments SET status = ?, log = ?, finished_at = ? WHERE id = ?`,
+		status, log, Now(), id)
+	return err
+}
+
+func (st *Store) ListDeployments(envID int64, limit int) ([]Deployment, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 200
+	}
+	rows, err := st.DB.Query(`SELECT id, environment_id, repository_id, ref, sha, status,
+	  COALESCE(log,''), created_at, COALESCE(finished_at,'') FROM deployments
+	  WHERE environment_id = ? ORDER BY id DESC LIMIT ?`, envID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Deployment
+	for rows.Next() {
+		var d Deployment
+		if err := rows.Scan(&d.ID, &d.EnvironmentID, &d.RepositoryID, &d.Ref, &d.SHA,
+			&d.Status, &d.Log, &d.CreatedAt, &d.FinishedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
 	}
 	return out, rows.Err()
 }
