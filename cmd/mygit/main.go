@@ -18,7 +18,7 @@ import (
 	"github.com/ajjs1ajjs/MyGit/internal/storage"
 )
 
-const Version = "3.4.0"
+const Version = "3.6.0"
 
 func main() {
 	// Handle version flags before flag.Parse, which would otherwise reject
@@ -37,6 +37,15 @@ func main() {
 	cfg := config.Default()
 	if *port != 0 {
 		cfg.Port = *port
+	}
+	// Fail closed on secrets: an empty/short JWT secret mints forgeable
+	// tokens, and an empty internal token breaks hooks/SSH. The config
+	// comments promise a startup failure — enforce it here.
+	if len(cfg.JWTSecret) < 32 {
+		log.Fatalf("MYGIT_JWT_SECRET must be set to at least 32 characters")
+	}
+	if _, err := cfg.EnsureInternalToken(); err != nil {
+		log.Fatalf("internal token: %v", err)
 	}
 	if err := os.MkdirAll(cfg.RepoRoot, 0o755); err != nil {
 		log.Fatalf("repo root: %v", err)

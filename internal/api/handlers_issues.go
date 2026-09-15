@@ -81,6 +81,20 @@ func (a *App) handleUpdateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	num := int(mustPathInt(r, "number"))
+	issue, err := a.Store.GetIssue(repo.ID, num)
+	if err != nil || issue == nil {
+		writeErr(w, http.StatusNotFound, "Issue not found")
+		return
+	}
+	// State changes (close/reopen/rename) need the author, a writer (>=30)
+	// or a superuser — plain readers can only comment. Previously any reader
+	// of a public repo could rewrite or close other users' issues.
+	p := a.principal(r)
+	role := a.Store.EffectiveRole(p.UserID, repo.ID, repo.OwnerID, p.IsSuper, repo.Visibility)
+	if issue.AuthorID != p.UserID && role < 30 && !p.IsSuper {
+		writeErr(w, http.StatusForbidden, "Only the author or writers can modify this issue")
+		return
+	}
 	var body map[string]any
 	if err := jsonDecode(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, "Invalid request body")

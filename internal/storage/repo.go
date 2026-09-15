@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -47,30 +48,34 @@ func (st *Store) CreateUser(u *User) (int64, error) {
 }
 
 // RegisterUser inserts a user and atomically decides superuser bootstrap.
-// BEGIN IMMEDIATE takes the SQLite write lock up front, so two concurrent
-// first registrations on an empty database cannot both observe COUNT(*)=0 and
-// both become superuser.
+// A dedicated connection + explicit Tx keeps the whole sequence on one
+// SQLite connection: database/sql may otherwise grab a different pooled
+// connection per Exec, silently breaking the mutual exclusion (two
+// concurrent first registrations could both observe COUNT(*)=0).
 func (st *Store) RegisterUser(u *User) (id int64, isSuperuser bool, err error) {
-	if _, err = st.DB.Exec(`BEGIN IMMEDIATE`); err != nil {
+	conn, err := st.DB.Conn(context.Background())
+	if err != nil {
 		return 0, false, err
 	}
-	defer func() {
-		// ROLLBACK is a harmless no-op after a successful COMMIT.
-		_, _ = st.DB.Exec(`ROLLBACK`)
-	}()
+	defer conn.Close()
+	tx, err := conn.BeginTx(context.Background(), nil)
+	if err != nil {
+		return 0, false, err
+	}
+	defer tx.Rollback()
 	var n int
-	if err = st.DB.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
+	if err = tx.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
 		return 0, false, err
 	}
 	isSuperuser = n == 0
 	now := Now()
-	res, err := st.DB.Exec(`INSERT INTO users (username, email, password_hash, full_name, bio, is_active, is_superuser, must_change_password, token_version, created_at, updated_at)
+	res, err := tx.Exec(`INSERT INTO users (username, email, password_hash, full_name, bio, is_active, is_superuser, must_change_password, token_version, created_at, updated_at)
 	  VALUES (?,?,?,?,?,?,?,?,?,?,?)`, u.Username, u.Email, u.PasswordHash, u.FullName, u.Bio,
 		u.IsActive, boolToInt(isSuperuser), u.MustChangePassword, 0, now, now)
 	if err != nil {
 		return 0, false, err
 	}
-	if _, err = st.DB.Exec(`COMMIT`); err != nil {
+	if err = tx.Commit(); err != nil {
 		return 0, false, err
 	}
 	id, _ = res.LastInsertId()
@@ -185,6 +190,42 @@ func (st *Store) TouchToken(id int64) {
 	_, _ = st.DB.Exec(`UPDATE tokens SET last_used_at = ? WHERE id = ?`, Now(), id)
 }
 
+// CountUserRepos counts repositories owned by a user (quota enforcement).
+func (st *Store) CountUserRepos(userID int64) (int, error) {
+	var n int
+	err := st.DB.QueryRow(`SELECT COUNT(*) FROM repositories WHERE owner_type = 'user' AND owner_id = ?`, userID).Scan(&n)
+	return n, err
+}
+
+// BumpTokenVersion atomically invalidates all JWTs of a user (password
+// change, admin reset).
+func (st *Store) BumpTokenVersion(id int64) error {
+	_, err := st.DB.Exec(`UPDATE users SET token_version = token_version + 1 WHERE id = ?`, id)
+	return err
+}
+
+// RevokeJTI denies a single JWT (logout). Only the jti + expiry persist.
+func (st *Store) RevokeJTI(jti string, expUnix int64) error {
+	_, err := st.DB.Exec(`INSERT OR IGNORE INTO revoked_tokens (jti, exp) VALUES (?, ?)`, jti, expUnix)
+	return err
+}
+
+func (st *Store) IsJTIRevoked(jti string) bool {
+	if jti == "" {
+		return false
+	}
+	var n int
+	if err := st.DB.QueryRow(`SELECT COUNT(*) FROM revoked_tokens WHERE jti = ?`, jti).Scan(&n); err != nil {
+		return false
+	}
+	return n > 0
+}
+
+// PruneRevoked drops expired denylist rows (called opportunistically).
+func (st *Store) PruneRevoked(nowUnix int64) {
+	_, _ = st.DB.Exec(`DELETE FROM revoked_tokens WHERE exp < ?`, nowUnix)
+}
+
 // --- ssh keys ---
 
 type SSHKey struct {
@@ -297,17 +338,30 @@ func (st *Store) GetRepoByPath(path string) (*Repository, error) {
 // ListAccessibleRepos returns repos the user can see (owner, superuser, explicit
 // access, or public).
 func (st *Store) ListAccessibleRepos(userID int64, isSuperuser bool) ([]Repository, error) {
+	return st.ListAccessibleReposPaged(userID, isSuperuser, 500, 0)
+}
+
+// ListAccessibleReposPaged bounds list responses (DoS guard: the unpaged
+// variant loaded every visible repository into memory).
+func (st *Store) ListAccessibleReposPaged(userID int64, isSuperuser bool, limit, offset int) ([]Repository, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 500
+	}
+	if offset < 0 {
+		offset = 0
+	}
 	var query string
 	var args []any
 	if isSuperuser {
-		query = `SELECT ` + repoCols + ` FROM repositories ORDER BY id DESC`
+		query = `SELECT ` + repoCols + ` FROM repositories ORDER BY id DESC LIMIT ? OFFSET ?`
+		args = []any{limit, offset}
 	} else {
 		query = `SELECT DISTINCT r.` + strings.ReplaceAll(repoCols, ", ", ", r.") +
 			` FROM repositories r WHERE r.visibility = 'public'
 			   OR r.owner_id = ?
 			   OR EXISTS (SELECT 1 FROM access a WHERE a.repository_id = r.id AND a.user_id = ? AND a.role >= 10)
-			   ORDER BY r.id DESC`
-		args = []any{userID, userID}
+			   ORDER BY r.id DESC LIMIT ? OFFSET ?`
+		args = []any{userID, userID, limit, offset}
 	}
 	rows, err := st.DB.Query(query, args...)
 	if err != nil {
@@ -325,7 +379,7 @@ func (st *Store) SearchRepos(userID int64, isSuperuser bool, q string) ([]Reposi
 	var query string
 	var args []any
 	if isSuperuser {
-		query = `SELECT ` + repoCols + ` FROM repositories WHERE LOWER(name) LIKE ? OR LOWER(path) LIKE ? ORDER BY id DESC`
+		query = `SELECT ` + repoCols + ` FROM repositories WHERE LOWER(name) LIKE ? OR LOWER(path) LIKE ? ORDER BY id DESC LIMIT 500`
 		args = []any{like, like}
 	} else {
 		query = `SELECT DISTINCT r.` + strings.ReplaceAll(repoCols, ", ", ", r.") +
@@ -333,7 +387,7 @@ func (st *Store) SearchRepos(userID int64, isSuperuser bool, q string) ([]Reposi
 			   AND (r.visibility = 'public'
 			     OR r.owner_id = ?
 			     OR EXISTS (SELECT 1 FROM access a WHERE a.repository_id = r.id AND a.user_id = ? AND a.role >= 10))
-			   ORDER BY r.id DESC`
+			   ORDER BY r.id DESC LIMIT 500`
 		args = []any{like, like, userID, userID}
 	}
 	rows, err := st.DB.Query(query, args...)
@@ -520,23 +574,30 @@ var allowedUpdateColumns = map[string]map[string]bool{
 		"password_hash":        true,
 	},
 	"repositories": {
-		"visibility":      true,
-		"default_branch":  true,
-		"is_archived":     true,
-		"is_fork":         true,
-		"description":     true,
+		"visibility":     true,
+		"default_branch": true,
+		"is_archived":    true,
+		"is_fork":        true,
+		"description":    true,
+		"size_kb":        true,
+		"updated_at":     true,
 	},
 	"issues": {
+		"title":       true,
 		"state":       true,
 		"assignee_id": true,
 		"milestone_id": true,
 		"description": true,
 	},
 	"merge_requests": {
-		"state":       true,
-		"assignee_id": true,
-		"target_branch": true,
-		"source_branch": true,
+		"state":            true,
+		"assignee_id":      true,
+		"target_branch":    true,
+		"source_branch":    true,
+		"title":            true,
+		"description":      true,
+		"merge_commit_sha": true,
+		"updated_at":       true,
 	},
 }
 
@@ -659,18 +720,11 @@ func (st *Store) ListIssues(repoID int64, state string) ([]Issue, error) {
 }
 
 func (st *Store) UpdateIssue(repoID int64, number int, fields map[string]any) error {
-	if len(fields) == 0 {
-		return nil
+	issue, err := st.GetIssue(repoID, number)
+	if err != nil || issue == nil {
+		return err
 	}
-	var sets []string
-	var args []any
-	for k, v := range fields {
-		sets = append(sets, k+" = ?")
-		args = append(args, v)
-	}
-	args = append(args, repoID, number)
-	_, err := st.DB.Exec(`UPDATE issues SET `+strings.Join(sets, ", ")+` WHERE repository_id = ? AND number = ?`, args...)
-	return err
+	return genericUpdate(st.DB, "issues", issue.ID, fields)
 }
 
 func (st *Store) AddIssueComment(issueID, authorID int64, body string) (int64, error) {
@@ -758,15 +812,11 @@ func (st *Store) ListMRs(repoID int64) ([]MergeRequest, error) {
 }
 
 func (st *Store) UpdateMR(repoID int64, number int, fields map[string]any) error {
-	var sets []string
-	var args []any
-	for k, v := range fields {
-		sets = append(sets, k+" = ?")
-		args = append(args, v)
+	mr, err := st.GetMR(repoID, number)
+	if err != nil || mr == nil {
+		return err
 	}
-	args = append(args, repoID, number)
-	_, err := st.DB.Exec(`UPDATE merge_requests SET `+strings.Join(sets, ", ")+` WHERE repository_id = ? AND number = ?`, args...)
-	return err
+	return genericUpdate(st.DB, "merge_requests", mr.ID, fields)
 }
 
 // --- merge request comments ---

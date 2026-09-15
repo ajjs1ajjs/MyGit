@@ -298,8 +298,10 @@ func TestCannotDeleteOthersToken(t *testing.T) {
 
 	path := fmt.Sprintf("%s/api/v1/users/alice/tokens/%v/", base, tokenID)
 	resp, b = authReq("DELETE", path, login.Access, nil)
-	if resp.StatusCode != 200 {
-		t.Fatalf("bob delete = %d: %s", resp.StatusCode, b)
+	// Cross-user segment must 404 (confused deputy closed): bob's delete of
+	// alice's token path is rejected instead of silently no-op 200.
+	if resp.StatusCode != 404 {
+		t.Fatalf("bob delete = %d: %s, want 404", resp.StatusCode, b)
 	}
 
 	// alice's token must still be listed
@@ -485,8 +487,15 @@ func TestCookieSession(t *testing.T) {
 	if resp.StatusCode != 201 {
 		t.Fatalf("register = %d", resp.StatusCode)
 	}
-	// cookies must be HttpOnly (not readable by JS)
+	// session cookies must be HttpOnly (not readable by JS); the
+	// double-submit CSRF cookie is intentionally readable by first-party JS.
 	for _, c := range resp.Cookies() {
+		if c.Name == "mygit_csrf" {
+			if c.HttpOnly {
+				t.Fatalf("csrf cookie must NOT be HttpOnly (first-party JS echoes it)")
+			}
+			continue
+		}
 		if !c.HttpOnly {
 			t.Fatalf("cookie %q must be HttpOnly", c.Name)
 		}
@@ -507,8 +516,20 @@ func TestCookieSession(t *testing.T) {
 		t.Fatalf("cookie /me = %d: %s", resp.StatusCode, b)
 	}
 
-	// logout clears the session
-	resp, err = client.Post(base+"/api/v1/auth/logout/", "application/json", nil)
+	// logout clears the session (cookie POST carries the double-submit token)
+	csrf := ""
+	if u, err := url.Parse(base); err == nil {
+		for _, c := range jar.Cookies(u) {
+			if c.Name == "mygit_csrf" {
+				csrf = c.Value
+			}
+		}
+	}
+	reqLogout, _ := http.NewRequest("POST", base+"/api/v1/auth/logout/", nil)
+	if csrf != "" {
+		reqLogout.Header.Set("X-CSRF-Token", csrf)
+	}
+	resp, err = client.Do(reqLogout)
 	if err != nil {
 		t.Fatalf("logout: %v", err)
 	}

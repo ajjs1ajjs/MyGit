@@ -92,6 +92,10 @@ func (a *App) handleGetProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, repoToMap(*repo))
 }
 
+// maxReposPerUser caps repositories per non-superuser (fork/import/create
+// bomb guard: each repo is a full on-disk clone with no other quota).
+const maxReposPerUser = 100
+
 func (a *App) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	p := a.principal(r)
 	var body importRequest
@@ -127,6 +131,12 @@ func (a *App) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	if existing, _ := a.Store.GetRepoByPath(path); existing != nil {
 		writeErr(w, http.StatusBadRequest, "Repository already exists")
 		return
+	}
+	if !p.IsSuper {
+		if n, err := a.Store.CountUserRepos(p.UserID); err == nil && n >= maxReposPerUser {
+			writeErr(w, http.StatusForbidden, "Repository quota exceeded")
+			return
+		}
 	}
 	// Defense in depth: the owner component must be a safe path segment.
 	if !validRepoName(ownerPath) {
@@ -354,6 +364,14 @@ func (a *App) handleForkProject(w http.ResponseWriter, r *http.Request) {
 	if existing, _ := a.Store.GetRepoByPath(newPath); existing != nil {
 		writeErr(w, http.StatusBadRequest, "A repository with this name already exists")
 		return
+	}
+	// Fork-bomb guard: cap repositories per user (disk exhaustion via
+	// unlimited forks/imports). Superusers are exempt.
+	if !p.IsSuper {
+		if n, err := a.Store.CountUserRepos(p.UserID); err == nil && n >= maxReposPerUser {
+			writeErr(w, http.StatusForbidden, "Repository quota exceeded")
+			return
+		}
 	}
 	fork := &storage.Repository{
 		OwnerType: "user", OwnerID: p.UserID, Name: repo.Name, Path: newPath,

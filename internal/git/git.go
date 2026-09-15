@@ -268,7 +268,9 @@ func (b *Backend) Tree(dir, ref, path string, recursive bool) ([]TreeEntry, erro
 	if path != "" {
 		target = ref + ":" + path
 	}
-	args = append(args, target)
+	// End-of-options: ref/path come from query strings — a value starting
+	// with "-" must never be parsed as a flag by the child process.
+	args = append(args, "--", target)
 	out, err := run(b.Binary, dir, args...)
 	if err != nil {
 		return nil, err
@@ -322,20 +324,38 @@ func parseTree(out string) []TreeEntry {
 }
 
 // Blob returns the raw content of a file at ref:path (or at a raw sha).
+// Capped at maxBlobBytes: full-file buffering of multi-GB blobs would OOM
+// the server (callers serve base64 JSON, +33% on top).
+const maxBlobBytes = 50 << 20
+
 func (b *Backend) Blob(dir, ref, path string) ([]byte, error) {
 	target := ref
 	if path != "" {
 		target = ref + ":" + path
 	}
-	cmd, cancel := b.cmd(dir, "cat-file", "blob", target)
+	cmd, cancel := b.cmd(dir, "cat-file", "blob", "--", target)
 	defer cancel()
-	return cmd.Output()
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	if len(out) > maxBlobBytes {
+		return nil, fmt.Errorf("blob exceeds %d bytes", maxBlobBytes)
+	}
+	return out, nil
 }
 
 func (b *Backend) BlobAtSHA(dir, sha string) ([]byte, error) {
 	cmd, cancel := b.cmd(dir, "cat-file", "blob", sha)
 	defer cancel()
-	return cmd.Output()
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	if len(out) > maxBlobBytes {
+		return nil, fmt.Errorf("blob exceeds %d bytes", maxBlobBytes)
+	}
+	return out, nil
 }
 
 type CommitAuthor struct {
@@ -450,6 +470,12 @@ type FileDiff struct {
 }
 
 func (b *Backend) Diff(dir, base, head string) (string, error) {
+	// Empty revisions are rejected here (not delegated to git): an empty
+	// string would silently change the diff semantics (worktree diff).
+	// Both revisions are validated as safe refs by callers (safeRefArg).
+	if strings.TrimSpace(base) == "" || strings.TrimSpace(head) == "" {
+		return "", fmt.Errorf("diff requires two revisions")
+	}
 	return run(b.Binary, dir, "diff", base, head)
 }
 

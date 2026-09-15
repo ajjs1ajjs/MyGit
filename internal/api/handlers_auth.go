@@ -29,11 +29,16 @@ func (a *App) setAuthCookies(w http.ResponseWriter, r *http.Request, access, ref
 	secure := a.isHTTPS(r)
 	http.SetCookie(w, &http.Cookie{Name: a.accessCookie(), Value: access, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
 	http.SetCookie(w, &http.Cookie{Name: a.refreshCookie(), Value: refresh, Path: "/api/v1/auth", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode})
+	// Double-submit CSRF cookie: readable by first-party JS, echoed back in
+	// X-CSRF-Token on state-changing calls (see withAuth gate in server.go).
+	csrf, _ := auth.RandomToken(24)
+	http.SetCookie(w, &http.Cookie{Name: csrfCookieName, Value: csrf, Path: "/", HttpOnly: false, Secure: secure, SameSite: http.SameSiteStrictMode})
 }
 
 func (a *App) clearAuthCookies(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{Name: a.accessCookie(), Value: "", Path: "/", HttpOnly: true, MaxAge: -1})
 	http.SetCookie(w, &http.Cookie{Name: a.refreshCookie(), Value: "", Path: "/api/v1/auth", HttpOnly: true, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: csrfCookieName, Value: "", Path: "/", MaxAge: -1})
 }
 
 func (a *App) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +121,25 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil || u == nil {
 		u, _ = a.Store.GetUserByEmail(identity)
 	}
-	if u == nil || !auth.VerifyPassword(u.PasswordHash, body.Password) {
+	if u == nil {
+		// Dummy bcrypt comparison so unknown users cost the same as a real
+		// password check (no timing oracle for username enumeration).
+		// NOTE: the per-username lockout below deliberately does NOT count
+		// unknown users — otherwise any username string becomes a shared
+		// 10-attempt budget (DoS on the name + cross-test interference);
+		// unknown-user spray is covered by the per-IP limiter.
+		_ = auth.VerifyPassword("$2a$10$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", body.Password)
+		writeErr(w, http.StatusUnauthorized, "Invalid credentials")
+		return
+	}
+	// Per-username lockout over the account limiter: 10 failures in 30 min
+	// lock the account, stopping spray across rotating IPs. Reset on success.
+	lockKey := "user:" + strings.ToLower(u.Username)
+	if !a.loginLimiter.allowKey(lockKey, 10, 30*time.Minute) {
+		writeErr(w, http.StatusTooManyRequests, "Too many login attempts. Try again later.")
+		return
+	}
+	if !auth.VerifyPassword(u.PasswordHash, body.Password) {
 		writeErr(w, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
@@ -124,6 +147,7 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "Account is disabled")
 		return
 	}
+	a.loginLimiter.reset("user:" + strings.ToLower(u.Username))
 	access, refresh, _ := a.Auth.TokenPair(u.ID, u.Username, int64(u.TokenVersion))
 	a.setAuthCookies(w, r, access, refresh)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -182,12 +206,37 @@ func (a *App) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"access": access, "refresh": refresh})
 }
 
-// handleLogout clears the session cookies. Server-side revocation of a stolen
-// token is handled by token_version on password change; this endpoint clears
-// the browser session.
+// handleLogout clears the session cookies AND revokes the presented access
+// token (jti denylist), so a stolen copy dies with the session instead of
+// living until exp. Requires authentication (wired with withAuth).
 func (a *App) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if p := a.principal(r); p != nil && p.JTI != "" {
+		exp := int64(0)
+		if claims, err := a.Auth.Parse(bearerOrCookie(r), "access"); err == nil && claims.ExpiresAt != nil {
+			exp = claims.ExpiresAt.Unix()
+		}
+		_ = a.Store.RevokeJTI(p.JTI, exp)
+	}
 	a.clearAuthCookies(w)
 	writeJSON(w, http.StatusOK, map[string]any{"detail": "logged out"})
+}
+
+// bearerOrCookie extracts the raw access JWT from the Authorization header
+// or the session cookie (whichever the request authenticated with).
+func bearerOrCookie(r *http.Request) string {
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		return strings.TrimPrefix(h, "Bearer ")
+	}
+	if c, err := r.Cookie("mygit_access"); err == nil {
+		return c.Value
+	}
+	// Access cookies are namespaced by port (mygit_access_<port>).
+	for _, c := range r.Cookies() {
+		if strings.HasPrefix(c.Name, "mygit_access_") {
+			return c.Value
+		}
+	}
+	return ""
 }
 
 func (a *App) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -283,6 +332,12 @@ func keyFingerprint(pubKey string) string {
 }
 
 func (a *App) handleListKeys(w http.ResponseWriter, r *http.Request) {
+	// The {username} segment is decorative: keys are always scoped to the
+	// caller (requireSelf), so /users/victim/keys/ can never leak or
+	// confuse (confused-deputy). Same for all handlers below.
+	if !a.requireSelfKeys(w, r) {
+		return
+	}
 	p := a.principal(r)
 	keys, err := a.Store.ListSSHKeys(p.UserID)
 	if err != nil {
@@ -296,6 +351,9 @@ func (a *App) handleListKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleAddKey(w http.ResponseWriter, r *http.Request) {
+	if !a.requireSelfKeys(w, r) {
+		return
+	}
 	p := a.principal(r)
 	var body struct {
 		Title     string `json:"title"`
@@ -318,6 +376,9 @@ func (a *App) handleAddKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleDeleteKey(w http.ResponseWriter, r *http.Request) {
+	if !a.requireSelfKeys(w, r) {
+		return
+	}
 	p := a.principal(r)
 	id := mustPathInt(r, "keyID")
 	if err := a.Store.DeleteSSHKey(p.UserID, id); err != nil {
@@ -327,9 +388,28 @@ func (a *App) handleDeleteKey(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"detail": "deleted"})
 }
 
+// requireSelfKeys enforces that the {username} segment matches the caller
+// (or a superuser): /users/victim/keys/ must 404, not silently serve the
+// caller's own keys (confused deputy).
+func (a *App) requireSelfKeys(w http.ResponseWriter, r *http.Request) bool {
+	p := a.principal(r)
+	if p == nil {
+		writeErr(w, http.StatusUnauthorized, "Authentication required")
+		return false
+	}
+	if seg := urlParam(r, "username"); seg != "" && seg != p.Username && !p.IsSuper {
+		writeErr(w, http.StatusNotFound, "Not found")
+		return false
+	}
+	return true
+}
+
 // --- personal access tokens ---
 
 func (a *App) handleListTokens(w http.ResponseWriter, r *http.Request) {
+	if !a.requireSelfKeys(w, r) {
+		return
+	}
 	p := a.principal(r)
 	tokens, err := a.Store.ListTokens(p.UserID)
 	if err != nil {
@@ -348,6 +428,9 @@ func (a *App) handleListTokens(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleCreateToken(w http.ResponseWriter, r *http.Request) {
+	if !a.requireSelfKeys(w, r) {
+		return
+	}
 	p := a.principal(r)
 	var body struct {
 		Name          string   `json:"name"`
@@ -365,8 +448,17 @@ func (a *App) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	}
 	raw := "mygit_pat_" + rawToken
 	hash := auth.HashToken(raw)
+	// Scope allowlist: unknown strings are rejected instead of persisted,
+	// so a typo can't mint an silently-unscoped token.
+	allowedScopes := map[string]bool{"read": true, "read_repo": true, "write_repo": true, "write": true, "api": true}
 	scopes := "[]"
 	if body.Scopes != nil {
+		for _, s := range body.Scopes {
+			if !allowedScopes[s] {
+				writeErr(w, http.StatusBadRequest, "Unknown scope: "+s)
+				return
+			}
+		}
 		b, _ := json.Marshal(body.Scopes)
 		scopes = string(b)
 	}
@@ -383,6 +475,9 @@ func (a *App) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleDeleteToken(w http.ResponseWriter, r *http.Request) {
+	if !a.requireSelfKeys(w, r) {
+		return
+	}
 	p := a.principal(r)
 	id := mustPathInt(r, "tokenID")
 	if err := a.Store.DeleteToken(p.UserID, id); err != nil {

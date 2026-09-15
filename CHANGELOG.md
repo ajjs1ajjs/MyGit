@@ -1,3 +1,26 @@
+## [3.6.0] - 2026-09-15
+
+### 🔒 Security (audit round, all findings closed)
+
+- **Startup fail-closed**: `MYGIT_JWT_SECRET` <32 chars or missing `MYGIT_INTERNAL_API_TOKEN` now aborts start (was: forgeable JWTs / broken hooks).
+- **JWT revocation**: jti denylist on logout (`revoked_tokens`); `token_version` bump on password change/admin reset; deleted users denied via fresh lookup.
+- **Key separation**: integration-token cipher uses `sha256("mygit-tokens-v1:"+secret)` with legacy fallback for old rows.
+- **Cookie CSRF**: double-submit (`mygit_csrf` + `X-CSRF-Token`) or same-origin, enforced in `withAuth` for cookie-authed writes; Bearer/PAT exempt; frontend sends the header centrally.
+- **PAT scopes enforced**: creation whitelist (`read`, `read_repo`, `write_repo`, `write`, `api`); read-only tokens get 403 on writes (was: full user rights); legacy unscoped tokens documented for rotation.
+- **Confused deputy closed**: `{username}` in keys/tokens routes must match the caller (404 otherwise).
+- **Login**: DB-error oracle → 401; dummy bcrypt for unknown users; per-username lockout 10/30min + reset on success; 1MB body caps on all JSON POST/PUT.
+- **must_change_password** enforced server-side (sessions and PATs).
+- **SSRF/clone**: loopback/link-local/metadata + RFC1918/ULA + resolution check, `MYGIT_ALLOW_PRIVATE_CLONE=1` opt-out; fork/create/import quota 100 repos/user.
+- **Git layer**: `Tree`/`Blob` end-of-options, 50MB blob cap, empty-revision `Diff` guard, push 413 past 256MB (was: silent truncation), post-receive path gate.
+- **Issues**: state changes need author/writer(≥30)/superuser; `UpdateIssue`/`UpdateMR` through the column whitelist (+`title`).
+- **Storage**: `RegisterUser` single-connection Tx; `migrate` allowlist + quoted identifiers; paged repo lists (500); `audit_logs` 365-day retention.
+- **SMTP**: no plaintext auth without STARTTLS on 587; notification secrets extended.
+- **Supply chain**: CI least-privilege + SHA pins + Go 1.25.7; HSTS TLS-only; installers fail-closed checksums; DOMPurify hardening.
+
+### ✅ Tests
+
+- New regression: revocation, CSRF gate, PAT scope, unknown scope, cross-user 404, SSRF userinfo/pinning. Full `go test ./...` green (2 pre-existing Windows-git env failures unrelated to this change).
+
 ## [3.5.1] - 2026-09-09
 
 ### Changed

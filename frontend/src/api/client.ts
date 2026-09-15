@@ -20,6 +20,12 @@ async function request(path: string, options: RequestInit = {}) {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   };
+  // Double-submit CSRF: echo the server-issued cookie on state-changing calls
+  // (the server also accepts same-origin Origin/Referer as fallback).
+  if (options.method && options.method !== "GET" && options.method !== "HEAD") {
+    const m = document.cookie.match(/(?:^|;\s*)mygit_csrf=([^;]+)/);
+    if (m) headers["X-CSRF-Token"] = decodeURIComponent(m[1]);
+  }
   let res = await fetch(`${BASE}${path}`, { ...options, headers, credentials: "include" });
   if (res.status === 401) {
     const refreshed = await refreshSession();

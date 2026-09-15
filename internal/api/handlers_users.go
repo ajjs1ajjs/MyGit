@@ -88,6 +88,7 @@ func (a *App) handlePatchUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fields := map[string]any{}
+	pwChanged := false
 	if v, ok := body["full_name"].(string); ok {
 		fields["full_name"] = v
 	}
@@ -143,8 +144,9 @@ func (a *App) handlePatchUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		fields["password_hash"] = hash
-		// Force the user to re-login: bump token_version.
-		fields["token_version"] = int64(u.TokenVersion + 1)
+		// Force re-login via atomic bump after the update (not an absolute
+		// value: concurrent updates must not clobber each other).
+		pwChanged = true
 	}
 	if len(fields) == 0 {
 		writeErr(w, http.StatusBadRequest, "Nothing to update")
@@ -204,6 +206,9 @@ func (a *App) handlePatchUser(w http.ResponseWriter, r *http.Request) {
 		}
 		writeErr(w, http.StatusInternalServerError, "Database error")
 		return
+	}
+	if pwChanged {
+		_ = a.Store.BumpTokenVersion(u.ID)
 	}
 	if newUsername != "" {
 		if err := a.Store.RenameUserRepoPaths(u.ID, u.Username, newUsername); err != nil {

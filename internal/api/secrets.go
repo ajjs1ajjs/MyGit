@@ -13,16 +13,30 @@ import (
 )
 
 // tokenCipher encrypts/decrypts integration tokens at rest with AES-256-GCM.
-// The key is derived from the JWT secret so no extra secret file is needed;
-// rotating MYGIT_JWT_SECRET makes stored integration tokens undecryptable,
-// which is the documented trade-off.
+// The key is domain-separated from the JWT secret ("mygit-tokens-v1:") so a
+// JWT compromise doesn't equal a token-vault compromise and rotation of one
+// doesn't silently re-key the other. Rows sealed with the legacy key
+// (plain sha256(secret)) decrypt via the fallback below.
 func tokenCipher(jwtSecret string) (cipher.AEAD, error) {
-sum := sha256.Sum256([]byte(jwtSecret))
-block, err := aes.NewCipher(sum[:])
-if err != nil {
-return nil, err
+	return cipherForKey(derivedTokenKey(jwtSecret))
 }
-return cipher.NewGCM(block)
+
+func cipherForKey(key []byte) (cipher.AEAD, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
+func derivedTokenKey(jwtSecret string) []byte {
+	sum := sha256.Sum256(append([]byte("mygit-tokens-v1:"), []byte(jwtSecret)...))
+	return sum[:]
+}
+
+func legacyTokenKey(jwtSecret string) []byte {
+	sum := sha256.Sum256([]byte(jwtSecret))
+	return sum[:]
 }
 
 func encryptToken(jwtSecret, plain string) (string, error) {
@@ -51,7 +65,22 @@ func decryptToken(jwtSecret, encoded string) (string, error) {
 		return "", fmt.Errorf("token too short")
 	}
 	version := raw[0]
-	aead, err := tokenCipher(jwtSecret)
+	// New key first, legacy key as fallback for pre-separation rows.
+	if plain, err := openWithKey(derivedTokenKey(jwtSecret), raw, version); err == nil {
+		return plain, nil
+	}
+	if plain, err := openWithKey(legacyTokenKey(jwtSecret), raw, version); err == nil {
+		return plain, nil
+	}
+	return "", fmt.Errorf("failed to decrypt stored token (key changed?)")
+}
+
+func openWithKey(key []byte, raw []byte, version byte) (string, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	aead, err := cipher.NewGCM(block)
 	if err != nil {
 		return "", err
 	}

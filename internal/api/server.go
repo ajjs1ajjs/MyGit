@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -30,13 +31,17 @@ type App struct {
 	Auth  *auth.Auth
 	Git   *git.Backend
 	Start time.Time
+
+	loginLimiter *rateLimiter
 }
 
 type principal struct {
-	UserID   int64
-	Username string
-	IsSuper  bool
-	Method   string // jwt | pat | basic | internal
+	UserID      int64
+	Username    string
+	IsSuper     bool
+	Method      string // jwt | pat | basic | cookie | internal
+	MustChange  bool
+	JTI         string
 }
 
 type ctxKey int
@@ -45,6 +50,10 @@ const principalKey ctxKey = 0
 
 func (a *App) Handler() http.Handler {
 	r := chi.NewRouter()
+
+	if a.loginLimiter == nil {
+		a.loginLimiter = newRateLimiter(10000, time.Hour)
+	}
 
 	// smart git HTTP — rate limited: every request spawns a git subprocess
 	// and Basic auth runs bcrypt, so unbounded requests are both a CPU DoS
@@ -69,7 +78,7 @@ func (a *App) Handler() http.Handler {
 	r.With(a.withRateLimit(authLimiter)).Post("/api/v1/auth/register/", a.handleRegister)
 	r.With(a.withRateLimit(authLimiter)).Post("/api/v1/auth/login/", a.handleLogin)
 	r.With(a.withRateLimit(authLimiter)).Post("/api/v1/auth/refresh/", a.handleRefresh)
-	r.Post("/api/v1/auth/logout/", a.handleLogout)
+	r.With(a.withAuth).Post("/api/v1/auth/logout/", a.handleLogout)
 
 	// users
 	r.Route("/api/v1/users", func(r chi.Router) {
@@ -239,9 +248,17 @@ func (a *App) authenticate(r *http.Request) (*principal, error) {
 			if claims.Ver != int64(u.TokenVersion) {
 				return nil, errors.New("token has been revoked")
 			}
-			return &principal{UserID: claims.UserID, Username: claims.Username, IsSuper: u.IsSuperuser == 1, Method: "jwt"}, nil
+			// Single-token revocation (logout): jtis on the denylist die
+			// with the session instead of living until exp.
+			if claims.ID != "" && a.Store.IsJTIRevoked(claims.ID) {
+				return nil, errors.New("token has been revoked")
+			}
+			return &principal{UserID: claims.UserID, Username: claims.Username, IsSuper: u.IsSuperuser == 1, Method: "jwt", MustChange: u.MustChangePassword == 1, JTI: claims.ID}, nil
 		}
 		if pat, err := a.Store.GetTokenByHash(auth.HashToken(token)); err == nil && pat != nil && !patExpired(pat.ExpiresAt) {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead && !patScopesAllowsWrite(pat.Scopes) {
+				return nil, errors.New("token scope is read-only")
+			}
 			a.Store.TouchToken(pat.ID)
 			u, _ := a.Store.GetUserByID(pat.UserID)
 			if u != nil {
@@ -260,6 +277,9 @@ func (a *App) authenticate(r *http.Request) (*principal, error) {
 				return &principal{UserID: u.ID, Username: u.Username, IsSuper: u.IsSuperuser == 1, Method: "basic"}, nil
 			}
 			if pat, err := a.Store.GetTokenByHash(auth.HashToken(pass)); err == nil && pat != nil && pat.UserID == u.ID && !patExpired(pat.ExpiresAt) {
+				if r.Method != http.MethodGet && r.Method != http.MethodHead && !patScopesAllowsWrite(pat.Scopes) {
+					return nil, errors.New("token scope is read-only")
+				}
 				a.Store.TouchToken(pat.ID)
 				return &principal{UserID: u.ID, Username: u.Username, IsSuper: u.IsSuperuser == 1, Method: "basic"}, nil
 			}
@@ -271,15 +291,31 @@ func (a *App) authenticate(r *http.Request) (*principal, error) {
 	if c, err := r.Cookie(a.accessCookie()); err == nil {
 		if claims, err := a.Auth.Parse(c.Value, "access"); err == nil {
 			u, _ := a.Store.GetUserByID(claims.UserID)
-			if u != nil && u.IsActive == 1 && claims.Ver == int64(u.TokenVersion) {
-				return &principal{UserID: u.ID, Username: u.Username, IsSuper: u.IsSuperuser == 1, Method: "cookie"}, nil
+			if u != nil && u.IsActive == 1 && claims.Ver == int64(u.TokenVersion) &&
+				(claims.ID == "" || !a.Store.IsJTIRevoked(claims.ID)) {
+				return &principal{UserID: u.ID, Username: u.Username, IsSuper: u.IsSuperuser == 1, Method: "cookie", MustChange: u.MustChangePassword == 1, JTI: claims.ID}, nil
 			}
 		}
 	}
 	return nil, errors.New("not authenticated")
 }
 
-// patExpired reports whether a PAT's expires_at (RFC3339) has passed.
+// patScopesAllowsWrite reports whether a PAT's stored scopes JSON grants
+// write access. Empty scopes mean a legacy pre-scope token: full access
+// (documented migration path — rotate to a scoped token). Unknown scope
+// strings are ignored (fail closed toward read-only).
+func patScopesAllowsWrite(scopesJSON string) bool {
+	var scopes []string
+	if err := json.Unmarshal([]byte(scopesJSON), &scopes); err != nil || len(scopes) == 0 {
+		return true // legacy unscoped token
+	}
+	for _, s := range scopes {
+		if s == "write_repo" || s == "write" || s == "api" {
+			return true
+		}
+	}
+	return false
+}
 func patExpired(expiresAt string) bool {
 	if expiresAt == "" {
 		return false
@@ -299,11 +335,48 @@ func (a *App) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := a.authenticate(r)
 		if err != nil {
+			// Scope denials are authorization (403), not authentication.
+			if err.Error() == "token scope is read-only" {
+				writeErr(w, http.StatusForbidden, "Token scope is read-only")
+				return
+			}
 			writeErr(w, http.StatusUnauthorized, "Authentication required")
 			return
 		}
+		// must_change_password is enforced server-side for every method
+		// (sessions and PATs alike): only password rotation, identity reads
+		// and logout stay available until the password is changed.
+		if p.MustChange && !isMustChangeExempt(r.URL.Path) {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"detail": "You must change your password before continuing",
+			})
+			return
+		}
+		// Cookie CSRF: state-changing requests that authenticate via the
+		// ambient session cookie (no explicit Authorization header) must
+		// prove same-origin or present the double-submit token. Bearer/PAT
+		// callers are exempt (non-ambient credentials).
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions &&
+			r.Header.Get("Authorization") == "" {
+			if !validSameOrigin(r) && !validDoubleSubmit(r) {
+				writeErr(w, http.StatusForbidden, "CSRF: missing or mismatched Origin/Referer")
+				return
+			}
+		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey, p)))
 	})
+}
+
+// isMustChangeExempt lists the endpoints a forced-rotation user may still use.
+func isMustChangeExempt(path string) bool {
+	if strings.HasSuffix(path, "/change_password/") || strings.HasSuffix(path, "/change-password") {
+		return true
+	}
+	switch path {
+	case "/api/v1/users/me/", "/api/v1/auth/me", "/api/v1/auth/logout/", "/api/v1/auth/logout":
+		return true
+	}
+	return false
 }
 
 func (a *App) withInternal(next http.Handler) http.Handler {
@@ -340,12 +413,85 @@ func (a *App) principal(r *http.Request) *principal {
 // isHTTPS reports whether the request arrived over HTTPS — either terminated
 // by this process or, when MYGIT_TRUST_PROXY=1, marked as https by the
 // trusted reverse proxy via X-Forwarded-Proto. Controls Secure cookies and
-// HSTS (both used to stay off in the recommended proxy deployment).
+// HSTS. TrustProxy is required: without it X-Forwarded-Proto is
+// attacker-controlled and must be ignored.
 func (a *App) isHTTPS(r *http.Request) bool {
 	if r.TLS != nil {
 		return true
 	}
+	if a.Cfg != nil && a.Cfg.TrustProxy &&
+		strings.EqualFold(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]), "https") {
+		return true
+	}
 	return false
+}
+
+// csrfCookieName is the double-submit CSRF cookie. Intentionally NOT HttpOnly
+// so first-party JS can read it and echo it in X-CSRF-Token; the cookie alone
+// is useless to an attacker because the check requires the header to match.
+const csrfCookieName = "mygit_csrf"
+
+// withCSRF protects cookie-authenticated state-changing requests (chi
+// middleware: use after withAuth so the principal is in context). Two
+// independent checks, either passing is sufficient:
+//  1. Same-origin via Origin/Referer hostname.
+//  2. Double-submit token: X-CSRF-Token header must equal the csrf_token
+//     cookie (constant-time). Bearer/PAT requests are exempt (not ambient).
+func (a *App) withCSRF(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !validSameOrigin(r) && !validDoubleSubmit(r) {
+			writeErr(w, http.StatusForbidden, "CSRF: missing or mismatched Origin/Referer")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func validSameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	referer := r.Header.Get("Referer")
+	host := r.Host
+	if origin != "" {
+		if u, err := url.Parse(origin); err == nil && u.Hostname() == hostnameOnly(host) {
+			return true
+		}
+		return false
+	}
+	if referer != "" {
+		if u, err := url.Parse(referer); err == nil && u.Hostname() == hostnameOnly(host) {
+			return true
+		}
+	}
+	return false
+}
+
+// validDoubleSubmit compares the X-CSRF-Token header against the csrf_token
+// cookie in constant time. A missing cookie or header fails closed.
+func validDoubleSubmit(r *http.Request) bool {
+	header := r.Header.Get("X-CSRF-Token")
+	if header == "" {
+		return false
+	}
+	cookie, err := r.Cookie(csrfCookieName)
+	if err != nil || cookie.Value == "" {
+		return false
+	}
+	return constantTimeEqual(header, cookie.Value)
+}
+
+func hostnameOnly(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return h
+	}
+	return host
 }
 
 func (a *App) withSecurity(next http.Handler) http.Handler {

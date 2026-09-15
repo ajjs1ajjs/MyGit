@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -42,6 +43,11 @@ CREATE TABLE IF NOT EXISTS tokens (
   last_used_at TEXT, expires_at TEXT,
   created_at TEXT
 );
+CREATE TABLE IF NOT EXISTS revoked_tokens (
+  jti TEXT PRIMARY KEY,
+  exp INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_revoked_exp ON revoked_tokens(exp);
 CREATE TABLE IF NOT EXISTS repositories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   owner_type TEXT DEFAULT 'user',
@@ -303,7 +309,14 @@ func migrate(db *sql.DB) error {
 }
 
 func addColumnIfMissing(db *sql.DB, table, column, ddl string) error {
-	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	// Both identifiers must come from the static allowlist below — never
+	// from caller input — because they are interpolated, not bound
+	// (PRAGMA doesn't take placeholders reliably).
+	want, ok := migrateAllowlist[table][column]
+	if !ok || want != ddl {
+		return fmt.Errorf("migration not allowlisted: %s.%s", table, column)
+	}
+	rows, err := db.Query(fmt.Sprintf("SELECT name FROM pragma_table_info(%s)", quoteIdent(table)))
 	if err != nil {
 		return err
 	}
@@ -320,8 +333,23 @@ func addColumnIfMissing(db *sql.DB, table, column, ddl string) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, ddl))
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", quoteIdent(table), quoteIdent(column), ddl))
 	return err
+}
+
+// migrateAllowlist pins every (table, column, ddl) triple the migrator may
+// touch. Identifiers are interpolated into PRAGMA/ALTER, so anything outside
+// this map is rejected instead of concatenated.
+var migrateAllowlist = map[string]map[string]string{
+	"users":            {"token_version": "INTEGER DEFAULT 0"},
+	"wiki_pages":       {"created_at": "TEXT DEFAULT ''"},
+	"repositories":     {"storage_path": "TEXT DEFAULT ''"},
+	"backup_schedules": {"last_run_at": "TEXT DEFAULT ''"},
+}
+
+// quoteIdent quotes an already-allowlisted identifier.
+func quoteIdent(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
 func Now() string {

@@ -198,6 +198,12 @@ func (a *App) handleImportProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "A repository with this name already exists")
 		return
 	}
+	if !p.IsSuper {
+		if n, err := a.Store.CountUserRepos(p.UserID); err == nil && n >= maxReposPerUser {
+			writeErr(w, http.StatusForbidden, "Repository quota exceeded")
+			return
+		}
+	}
 
 	// custom_disk_path: absolute physical directory inside the configured
 	// custom storage root, superuser only.
@@ -347,8 +353,14 @@ func validProviderRepoName(s string) bool {
 	return true
 }
 
-// isBlockedCloneHost reports whether host is a loopback or link-local
-// address (including cloud metadata endpoints) or a localhost name.
+// isBlockedCloneHost reports whether host must be refused as a clone source:
+// loopback, link-local (incl. cloud metadata), unspecified, multicast and
+// RFC1918/ULA private ranges, plus localhost/metadata names. The daemon would
+// otherwise make an outbound git clone to an attacker-chosen internal target
+// (and write it to disk, uncapped, for up to 10 minutes). DNS names resolve
+// at request time while git re-resolves at clone time (TOCTOU): names that
+// resolve to a blocked address now are refused, and operators needing
+// on-prem mirrors set MYGIT_ALLOW_PRIVATE_CLONE=1 explicitly.
 func isBlockedCloneHost(host string) bool {
 	h := strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]"))
 	if h == "" {
@@ -357,11 +369,36 @@ func isBlockedCloneHost(host string) bool {
 	if h == "localhost" || strings.HasSuffix(h, ".localhost") || h == "metadata.google.internal" {
 		return true
 	}
-	ip := net.ParseIP(h)
-	if ip == nil {
+	if ip := net.ParseIP(h); ip != nil {
+		return cloneIPBlocked(ip)
+	}
+	if os.Getenv("MYGIT_ALLOW_PRIVATE_CLONE") == "1" {
 		return false
 	}
-	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
+	// Best-effort resolution check (request-time; git re-resolves later, but
+	// a currently-private name is refused rather than hoped to stay public).
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupHost(ctx, h)
+	if err != nil {
+		return false
+	}
+	for _, a := range addrs {
+		if ip := net.ParseIP(a); ip != nil && cloneIPBlocked(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneIPBlocked(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+		return true
+	}
+	if ip.IsPrivate() {
+		return true
+	}
+	return false
 }
 
 // --- server disk browser (admin) ---

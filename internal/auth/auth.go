@@ -40,17 +40,21 @@ func New(secret string, accessMin int, refreshDays int) *Auth {
 
 func (a *Auth) TokenPair(userID int64, username string, ver int64) (access, refresh string, err error) {
 	now := time.Now()
+	accessID, _ := RandomToken(16)
 	access, err = a.sign(Claims{UserID: userID, Username: username, Type: "access", Ver: ver,
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject: username, IssuedAt: jwt.NewNumericDate(now),
+			Subject: username, ID: accessID,
+			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(a.AccessExpire)),
 		}})
 	if err != nil {
 		return
 	}
+	refreshID, _ := RandomToken(16)
 	refresh, err = a.sign(Claims{UserID: userID, Username: username, Type: "refresh", Ver: ver,
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject: username, IssuedAt: jwt.NewNumericDate(now),
+			Subject: username, ID: refreshID,
+			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(a.RefreshExpire)),
 		}})
 	return

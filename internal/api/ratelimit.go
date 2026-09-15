@@ -49,16 +49,29 @@ func (rl *rateLimiter) cleanup() {
 }
 
 func (rl *rateLimiter) allow(ip string) bool {
+	return rl.allowKey(ip, rl.limit, rl.window)
+}
+
+// allowKey checks a custom bucket with its own budget (e.g. per-username
+// lockout sharing the limiter's map). Cleanup bounds the map.
+func (rl *rateLimiter) allowKey(key string, max int, window time.Duration) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	now := time.Now()
-	b, ok := rl.buckets[ip]
+	b, ok := rl.buckets[key]
 	if !ok || now.After(b.resetAt) {
-		rl.buckets[ip] = &ipBucket{count: 1, resetAt: now.Add(rl.window)}
+		rl.buckets[key] = &ipBucket{count: 1, resetAt: now.Add(window)}
 		return true
 	}
 	b.count++
-	return b.count <= rl.limit
+	return b.count <= max
+}
+
+// reset clears a bucket (successful login clears the account lockout).
+func (rl *rateLimiter) reset(key string) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	delete(rl.buckets, key)
 }
 
 // clientIP uses the socket peer address. X-Forwarded-For is only trusted when

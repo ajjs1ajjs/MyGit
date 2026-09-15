@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"strings"
@@ -93,9 +94,26 @@ func (a *App) handleGitRPC(w http.ResponseWriter, r *http.Request) {
 	if repo.StoragePath != "" {
 		dir = repo.StoragePath
 	}
-	// Stream the body straight into git's stdin (capped at 256MB) instead of
+	// Fail closed on oversize pushes instead of silently truncating the pack
+	// (a truncated pack used to be fed to git, corrupting the push): reject
+	// bodies past the 256MB cap with 413 before git ever sees them.
+	const maxPushBytes = 256 << 20
+	if r.ContentLength > maxPushBytes {
+		writeErr(w, http.StatusRequestEntityTooLarge, "push exceeds 256MB limit")
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxPushBytes+1))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+	if len(body) > maxPushBytes {
+		writeErr(w, http.StatusRequestEntityTooLarge, "push exceeds 256MB limit")
+		return
+	}
+	// Stream the body straight into git's stdin instead of
 	// buffering it in memory — large pushes used to consume the whole payload.
-	out, err := a.Git.RPC(dir, service, io.LimitReader(r.Body, 256<<20))
+	out, err := a.Git.RPC(dir, service, bytes.NewReader(body))
 	if err != nil {
 		if len(out) == 0 {
 			// git died before producing any pack data (bad input, missing
@@ -139,7 +157,13 @@ func (a *App) handlePreReceive(w http.ResponseWriter, r *http.Request) {
 func (a *App) handlePostReceive(w http.ResponseWriter, r *http.Request) {
 	repoPath := r.URL.Query().Get("repo")
 	parts := strings.Split(repoPath, "/")
-	if len(parts) >= 2 {
+	// Same naming gate as the smart-HTTP paths: an internal caller must not
+	// smuggle a filesystem path through the repo query param.
+	if len(parts) < 2 || !validRepoName(parts[0]) || !validRepoName(strings.TrimSuffix(parts[1], ".git")) {
+		writeErr(w, http.StatusBadRequest, "invalid repo")
+		return
+	}
+	{
 		dir := a.Git.RepoPath(parts[0], parts[1])
 		if repo, _ := a.Store.GetRepoByPath(repoPath); repo != nil {
 			if repo.StoragePath != "" {
