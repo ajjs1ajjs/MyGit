@@ -16,6 +16,7 @@ frontend/dist/
 *.db-wal
 *.sqlite
 repos/
+packages/
 
 # Secrets
 .mygit_jwt_secret
