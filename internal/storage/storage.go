@@ -48,6 +48,26 @@ CREATE TABLE IF NOT EXISTS revoked_tokens (
   exp INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_revoked_exp ON revoked_tokens(exp);
+CREATE TABLE IF NOT EXISTS runners (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  token_hash TEXT UNIQUE NOT NULL,
+  is_active INTEGER DEFAULT 1,
+  last_seen TEXT,
+  created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS pipeline_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repository_id INTEGER NOT NULL,
+  ref TEXT NOT NULL DEFAULT '',
+  sha TEXT NOT NULL DEFAULT '',
+  status TEXT DEFAULT 'queued',
+  log TEXT DEFAULT '',
+  created_at TEXT, started_at TEXT, finished_at TEXT,
+  UNIQUE(repository_id, ref, sha)
+);
+CREATE INDEX IF NOT EXISTS idx_pipeline_repo ON pipeline_jobs(repository_id);
+CREATE INDEX IF NOT EXISTS idx_pipeline_status ON pipeline_jobs(status);
 CREATE TABLE IF NOT EXISTS repositories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   owner_type TEXT DEFAULT 'user',

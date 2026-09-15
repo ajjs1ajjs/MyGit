@@ -171,6 +171,23 @@ func (a *App) handlePostReceive(w http.ResponseWriter, r *http.Request) {
 			}
 			size := a.Git.CountSize(dir)
 			_ = a.Store.UpdateRepo(repo.ID, map[string]any{"size_kb": size, "updated_at": storage.Now()})
+			// CI trigger: enqueue one pipeline job per pushed ref whose new
+			// commit owns a .mygit-ci.yml (idempotent per repo+ref+sha).
+			// Branch deletions (all-zero SHA) never trigger.
+			body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+			for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
+				fields := strings.Fields(line)
+				if len(fields) < 3 {
+					continue
+				}
+				newSHA, ref := fields[1], fields[2]
+				if newSHA == strings.Repeat("0", 40) || newSHA == strings.Repeat("0", 64) {
+					continue
+				}
+				if a.Git.HasCIConfig(dir, newSHA) {
+					_, _ = a.Store.EnqueuePipelineJob(repo.ID, ref, newSHA)
+				}
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})

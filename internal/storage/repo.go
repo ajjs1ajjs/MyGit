@@ -226,6 +226,160 @@ func (st *Store) PruneRevoked(nowUnix int64) {
 	_, _ = st.DB.Exec(`DELETE FROM revoked_tokens WHERE exp < ?`, nowUnix)
 }
 
+// --- CI runners / pipelines ---
+
+type Runner struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	TokenHash string `json:"-"`
+	IsActive  int    `json:"is_active"`
+	LastSeen  string `json:"last_seen"`
+	CreatedAt string `json:"created_at"`
+}
+
+type PipelineJob struct {
+	ID           int64  `json:"id"`
+	RepositoryID int64  `json:"repository_id"`
+	Ref          string `json:"ref"`
+	SHA          string `json:"sha"`
+	Status       string `json:"status"`
+	Log          string `json:"log"`
+	CreatedAt    string `json:"created_at"`
+	StartedAt    string `json:"started_at"`
+	FinishedAt   string `json:"finished_at"`
+}
+
+func (st *Store) RegisterRunner(name, tokenHash string) (int64, error) {
+	res, err := st.DB.Exec(`INSERT INTO runners (name, token_hash, is_active, created_at) VALUES (?,?,1,?)`,
+		name, tokenHash, Now())
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (st *Store) GetRunnerByHash(hash string) (*Runner, error) {
+	var r Runner
+	var active int
+	var lastSeen sql.NullString
+	err := st.DB.QueryRow(`SELECT id, name, token_hash, is_active, COALESCE(last_seen,''), created_at
+	  FROM runners WHERE token_hash = ?`, hash).Scan(&r.ID, &r.Name, &r.TokenHash, &active, &lastSeen, &r.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	r.IsActive = active
+	r.LastSeen = lastSeen.String
+	return &r, nil
+}
+
+func (st *Store) ListRunners() ([]Runner, error) {
+	rows, err := st.DB.Query(`SELECT id, name, token_hash, is_active, COALESCE(last_seen,''), created_at FROM runners ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Runner
+	for rows.Next() {
+		var r Runner
+		var active int
+		var lastSeen sql.NullString
+		if err := rows.Scan(&r.ID, &r.Name, &r.TokenHash, &active, &lastSeen, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		r.IsActive = active
+		r.LastSeen = lastSeen.String
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (st *Store) DeleteRunner(id int64) error {
+	_, err := st.DB.Exec(`DELETE FROM runners WHERE id = ?`, id)
+	return err
+}
+
+func (st *Store) TouchRunner(id int64) {
+	_, _ = st.DB.Exec(`UPDATE runners SET last_seen = ? WHERE id = ?`, Now(), id)
+}
+
+// EnqueuePipelineJob creates a queued job, idempotent per (repo, ref, sha)
+// so duplicate post-receive deliveries don't double-run.
+func (st *Store) EnqueuePipelineJob(repoID int64, ref, sha string) (int64, error) {
+	res, err := st.DB.Exec(`INSERT OR IGNORE INTO pipeline_jobs (repository_id, ref, sha, status, created_at)
+	  VALUES (?,?,?,'queued',?)`, repoID, ref, sha, Now())
+	if err != nil {
+		return 0, err
+	}
+	id, _ := res.LastInsertId()
+	if id == 0 {
+		_ = st.DB.QueryRow(`SELECT id FROM pipeline_jobs WHERE repository_id = ? AND ref = ? AND sha = ?`,
+			repoID, ref, sha).Scan(&id)
+	}
+	return id, nil
+}
+
+// ClaimPipelineJob atomically moves one queued job to running (single
+// claimant even with concurrent runners polling).
+func (st *Store) ClaimPipelineJob() (*PipelineJob, error) {
+	var j PipelineJob
+	err := st.DB.QueryRow(`SELECT id, repository_id, ref, sha, status, COALESCE(log,''), created_at,
+	  COALESCE(started_at,''), COALESCE(finished_at,'') FROM pipeline_jobs
+	  WHERE status = 'queued' ORDER BY id LIMIT 1`).Scan(
+		&j.ID, &j.RepositoryID, &j.Ref, &j.SHA, &j.Status, &j.Log,
+		&j.CreatedAt, &j.StartedAt, &j.FinishedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	res, err := st.DB.Exec(`UPDATE pipeline_jobs SET status = 'running', started_at = ? WHERE id = ? AND status = 'queued'`,
+		Now(), j.ID)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, nil // lost the race to another runner
+	}
+	j.Status = "running"
+	return &j, nil
+}
+
+func (st *Store) FinishPipelineJob(id int64, status, log string) error {
+	if status != "success" && status != "failed" {
+		status = "failed"
+	}
+	_, err := st.DB.Exec(`UPDATE pipeline_jobs SET status = ?, log = ?, finished_at = ? WHERE id = ?`,
+		status, log, Now(), id)
+	return err
+}
+
+func (st *Store) ListPipelineJobs(repoID int64, limit int) ([]PipelineJob, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 200
+	}
+	rows, err := st.DB.Query(`SELECT id, repository_id, ref, sha, status, COALESCE(log,''), created_at,
+	  COALESCE(started_at,''), COALESCE(finished_at,'') FROM pipeline_jobs
+	  WHERE repository_id = ? ORDER BY id DESC LIMIT ?`, repoID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PipelineJob
+	for rows.Next() {
+		var j PipelineJob
+		if err := rows.Scan(&j.ID, &j.RepositoryID, &j.Ref, &j.SHA, &j.Status, &j.Log,
+			&j.CreatedAt, &j.StartedAt, &j.FinishedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
 // --- ssh keys ---
 
 type SSHKey struct {

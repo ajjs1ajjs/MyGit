@@ -323,6 +323,18 @@ func parseTree(out string) []TreeEntry {
 	return entries
 }
 
+// HasCIConfig reports whether the commit owns a pipeline definition.
+// Only presence is checked here (capped read); runners fetch and interpret
+// the file themselves after cloning.
+func (b *Backend) HasCIConfig(dir, sha string) bool {
+	if sha == "" || strings.ContainsAny(sha, " \t\n") {
+		return false
+	}
+	cmd, cancel := b.cmd(dir, "cat-file", "-e", sha+":.mygit-ci.yml")
+	defer cancel()
+	return cmd.Run() == nil
+}
+
 // Blob returns the raw content of a file at ref:path (or at a raw sha).
 // Capped at maxBlobBytes: full-file buffering of multi-GB blobs would OOM
 // the server (callers serve base64 JSON, +33% on top).

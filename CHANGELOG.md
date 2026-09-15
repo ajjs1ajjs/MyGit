@@ -17,6 +17,10 @@
 - **SMTP**: no plaintext auth without STARTTLS on 587; notification secrets extended.
 - **Supply chain**: CI least-privilege + SHA pins + Go 1.25.7; HSTS TLS-only; installers fail-closed checksums; DOMPurify hardening.
 
+### Runners (CI MVP)
+
+- **Pipelines**: `.mygit-ci.yml` trigger on push (`post-receive`), idempotent queue, atomic claim, capped logs; runner protocol (`register/poll/finish`), superuser registration, `docs/RUNNERS.md` + `scripts/example-runner.sh`.
+
 ### ✅ Tests
 
 - New regression: revocation, CSRF gate, PAT scope, unknown scope, cross-user 404, SSRF userinfo/pinning. Full `go test ./...` green (2 pre-existing Windows-git env failures unrelated to this change).

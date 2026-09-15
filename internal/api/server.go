@@ -120,6 +120,18 @@ func (a *App) Handler() http.Handler {
 	})
 	r.With(a.withAuth, a.withAdmin).Get("/api/v1/repository-import-jobs/", a.handleImportJobs)
 
+	// CI runners (superuser registration; agents poll with runner tokens)
+	r.Route("/api/v1/admin/runners", func(r chi.Router) {
+		r.With(a.withAuth, a.withAdmin).Get("/", a.handleListRunners)
+		r.With(a.withAuth, a.withAdmin).Post("/", a.handleRegisterRunner)
+		r.With(a.withAuth, a.withAdmin).Delete("/{id}/", a.handleDeleteRunner)
+	})
+	// Runner agent protocol (no user session; rate-limited like git).
+	runnerLimiter := newRateLimiter(120, time.Minute)
+	r.With(a.withRateLimit(runnerLimiter)).Post("/api/v1/runners/jobs/next/", a.handleRunnerClaim)
+	r.With(a.withRateLimit(runnerLimiter)).Post("/api/v1/runners/jobs/{id}/finish/", a.handleRunnerFinish)
+	r.With(a.withAuth).Get("/api/v1/projects/{id}/pipelines/", a.handleListPipelines)
+
 	// projects
 	r.Route("/api/v1/projects", func(r chi.Router) {
 		r.With(a.withAuth).Get("/", a.handleListProjects)
